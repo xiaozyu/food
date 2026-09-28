@@ -2,390 +2,342 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>出門生活圈決策助手 - 附近美食/賣場/停車場雷達</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>出門生活圈助手 - 停車費率與美食雷達</title>
   
-  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- Leaflet Map CSS & JS (完全免費、免 API Key、零破圖) -->
+  <!-- Leaflet 官方庫 -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <style>
-    #map { height: 100%; width: 100%; z-index: 1; }
-    /* 自訂圖釘跳動效果 */
-    .leaflet-popup-content-wrapper {
-      background: #0f172a;
-      color: #f8fafc;
-      border: 1px solid #334155;
-      border-radius: 1rem;
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    /* 強制確保地圖有固定視窗比例，徹底解決手機黑畫面 */
+    #map-container {
+      height: 48dvh;
+      min-height: 320px;
+      width: 100%;
+      position: relative;
     }
-    .leaflet-popup-tip { background: #0f172a; }
+    #map {
+      height: 100% !important;
+      width: 100% !important;
+    }
+
+    /* 價格圖釘膠囊樣式 */
+    .price-pin {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      border: 1.5px solid #ffffff;
+      transform: translate(-50%, -50%);
+      transition: transform 0.15s ease-out;
+    }
+    .price-pin:active {
+      transform: translate(-50%, -50%) scale(1.15);
+    }
+    .pin-parking { background-color: #0284c7; color: #ffffff; }     /* 停車場：藍底 */
+    .pin-food { background-color: #ea580c; color: #ffffff; }        /* 美食：橘底 */
+    .pin-mart { background-color: #16a34a; color: #ffffff; }        /* 賣場：綠底 */
+    .pin-drink { background-color: #9333ea; color: #ffffff; }       /* 飲料：紫底 */
+
+    /* 規劃中心點標記動畫 */
+    .center-pointer {
+      width: 20px;
+      height: 20px;
+      background: #f97316;
+      border: 3px solid #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 0 15px #f97316;
+      animation: pulseAnim 1.2s infinite;
+      transform: translate(-50%, -50%);
+    }
+    @keyframes pulseAnim {
+      0% { transform: translate(-50%, -50%) scale(0.9); box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.7); }
+      70% { transform: translate(-50%, -50%) scale(1.1); box-shadow: 0 0 0 12px rgba(249, 115, 22, 0); }
+      100% { transform: translate(-50%, -50%) scale(0.9); box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+    }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 flex flex-col h-screen overflow-hidden font-sans">
 
-  <!-- 頂部列：中心點位置顯示、交通模式與重置定位 -->
-  <header class="bg-slate-900 border-b border-slate-800 px-4 py-2.5 flex items-center justify-between shrink-0 shadow-lg z-20">
-    <div class="flex items-center gap-3">
-      <span class="text-2xl">🧭</span>
+  <!-- 頂部精簡列 -->
+  <header class="bg-slate-900 border-b border-slate-800 px-3 py-2 flex items-center justify-between shrink-0 z-20">
+    <div class="flex items-center gap-2">
+      <span class="text-xl">🧭</span>
       <div>
-        <div class="flex items-center gap-2">
-          <h1 class="text-base font-black bg-gradient-to-r from-orange-400 to-amber-300 bg-clip-text text-transparent">
-            出門生活圈助手
-          </h1>
-          <span id="poolBadge" class="text-[10px] bg-orange-950 text-orange-400 border border-orange-700/60 px-2 py-0.5 rounded-full font-bold">
-            符合 18 處
-          </span>
+        <div class="flex items-center gap-1.5">
+          <h1 class="text-sm font-black text-orange-400">生活圈助手</h1>
+          <span id="poolBadge" class="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-mono">載入中</span>
         </div>
-        <div class="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-          <span id="centerLocText">正在偵測中心點位置...</span>
-        </div>
+        <p id="locHint" class="text-[10px] text-slate-400 truncate max-w-[200px]">點擊地圖任意處可標點規劃</p>
       </div>
     </div>
     
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-1.5">
       <!-- 交通模式切換 -->
-      <div class="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-        <button id="btnMoto" onclick="setMode('moto')" class="px-2.5 py-1 font-bold rounded-lg bg-orange-600 text-white transition">
-          🛵 騎車模式
-        </button>
-        <button id="btnCar" onclick="setMode('car')" class="px-2.5 py-1 font-bold rounded-lg text-slate-400 hover:text-slate-200 transition">
-          🚗 開車模式
-        </button>
+      <div class="bg-slate-950 p-0.5 rounded-lg border border-slate-800 flex text-xs">
+        <button id="btnMoto" onclick="setMode('moto')" class="px-2 py-1 font-bold rounded-md bg-orange-600 text-white">🛵 騎車</button>
+        <button id="btnCar" onclick="setMode('car')" class="px-2 py-1 font-bold rounded-md text-slate-400">🚗 開車</button>
       </div>
-
-      <!-- 重回我目前 GPS 所在地 -->
-      <button onclick="resetToMyLocation()" class="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs flex items-center gap-1 text-slate-200 shadow" title="回到我目前的位置">
-        <span>📍</span> <span class="hidden sm:inline">我的位置</span>
-      </button>
+      <button onclick="locateMe()" class="p-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs" title="回到我位置">📍</button>
     </div>
   </header>
 
-  <!-- 主畫面區域 -->
-  <main class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+  <!-- 上半部：實體地圖（直接在圖釘顯示價錢） -->
+  <div id="map-container" class="shrink-0 border-b border-slate-800">
+    <div id="map"></div>
+    <div class="absolute top-2 left-2 z-[500] bg-slate-900/85 backdrop-blur-md px-2 py-1 rounded-md border border-slate-700 text-[10px] text-slate-300 pointer-events-none">
+      👆 地圖可拖曳，點擊任意地點可直接移到該處
+    </div>
+  </div>
+
+  <!-- 下半部：分類切換、車程滑桿與詳細清單 -->
+  <div class="flex-1 flex flex-col min-h-0 bg-slate-900/95 overflow-hidden">
     
-    <!-- 左側控制與名單卡片面板 -->
-    <div class="w-full md:w-96 bg-slate-900/95 border-r border-slate-800 p-3.5 flex flex-col gap-3 overflow-y-auto shrink-0 z-10 shadow-2xl">
+    <!-- 篩選列 -->
+    <div class="p-3 border-b border-slate-800 space-y-2.5 shrink-0">
       
-      <!-- 預估車程滑桿（擴展至 40 分鐘） -->
-      <div class="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
-        <div class="flex justify-between items-center mb-1">
-          <label class="text-xs font-bold text-slate-300 flex items-center gap-1">
-            ⏱️ 目標車程半徑：<span id="timeVal" class="text-orange-400 font-bold text-sm">8 分鐘</span>
-          </label>
-          <span id="distVal" class="text-[11px] text-slate-400 font-mono">約 4.0 km</span>
+      <!-- 時間與半徑滑桿 (2~40 分鐘) -->
+      <div class="flex items-center gap-3">
+        <div class="shrink-0 text-xs font-bold text-slate-300 w-24">
+          ⏱️ 車程：<span id="timeVal" class="text-orange-400">8 分</span>
         </div>
         <input id="timeSlider" type="range" min="2" max="40" value="8" step="1"
-          class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-orange-500" 
-          oninput="onRadiusSliderChange(this.value)" />
-        <div class="flex justify-between text-[10px] text-slate-500 mt-1 font-mono">
-          <span>2分</span>
-          <span>15分</span>
-          <span>30分</span>
-          <span>40分鐘</span>
-        </div>
+          class="flex-1 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-orange-500" 
+          oninput="onRadiusChange(this.value)" />
+        <span id="distVal" class="shrink-0 text-[11px] text-slate-400 font-mono w-14 text-right">4.0 km</span>
       </div>
 
-      <!-- 全方位生活機能與出門分類 -->
+      <!-- 分類標籤 -->
+      <div class="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
+        <button onclick="changeCat('PARKING', this)" class="cat-pill active px-3 py-1.5 bg-sky-600 font-bold rounded-xl whitespace-nowrap border border-sky-400">🅿️ 停車場(標價)</button>
+        <button onclick="changeCat('FAST', this)" class="cat-pill px-3 py-1.5 bg-slate-800 text-slate-300 font-medium rounded-xl whitespace-nowrap border border-slate-700">🍟 速食快餐</button>
+        <button onclick="changeCat('MEAL', this)" class="cat-pill px-3 py-1.5 bg-slate-800 text-slate-300 font-medium rounded-xl whitespace-nowrap border border-slate-700">🍱 便當麵餃</button>
+        <button onclick="changeCat('STEAK', this)" class="cat-pill px-3 py-1.5 bg-slate-800 text-slate-300 font-medium rounded-xl whitespace-nowrap border border-slate-700">🥩 排餐火鍋</button>
+        <button onclick="changeCat('VEGE', this)" class="cat-pill px-3 py-1.5 bg-slate-800 text-slate-300 font-medium rounded-xl whitespace-nowrap border border-slate-700">🥦 素食炸物</button>
+        <button onclick="changeCat('DRINK', this)" class="cat-pill px-3 py-1.5 bg-slate-800 text-slate-300 font-medium rounded-xl whitespace-nowrap border border-slate-700">🧋 飲料甜品</button>
+        <button onclick="changeCat('MART', this)" class="cat-pill px-3 py-1.5 bg-slate-800 text-slate-300 font-medium rounded-xl whitespace-nowrap border border-slate-700">🛒 大賣場全聯</button>
+      </div>
+    </div>
+
+    <!-- 清單顯示區 -->
+    <div id="storeList" class="flex-1 overflow-y-auto p-3 space-y-2">
+      <!-- 卡片動態生成 -->
+    </div>
+  </div>
+
+  <!-- 詳細卡片彈窗 -->
+  <div id="infoModal" class="fixed inset-x-3 bottom-4 max-w-md mx-auto bg-slate-900 border-2 border-orange-500 rounded-2xl p-4 shadow-2xl z-[1000] hidden">
+    <div class="flex justify-between items-start mb-2">
       <div>
-        <label class="text-xs font-bold text-slate-400 block mb-1.5">🏷️ 想找甚麼？（點擊切換類別）</label>
-        <div class="grid grid-cols-4 gap-1.5" id="catGrid">
-          <button onclick="changeCategory('FOOD_FAST', this)" class="cat-pill active py-2 px-1 bg-orange-600 text-[11px] font-bold rounded-xl border border-orange-500 text-center transition">🍟 速食連鎖</button>
-          <button onclick="changeCategory('FOOD_MEAL', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🍱 便當麵餃</button>
-          <button onclick="changeCategory('FOOD_STEAK', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🥩 排餐鍋物</button>
-          <button onclick="changeCategory('FOOD_VEGE', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🥦 素食炸物</button>
-          
-          <button onclick="changeCategory('DRINK', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🧋 飲料甜品</button>
-          <button onclick="changeCategory('PARKING', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🅿️ 停車場(費率)</button>
-          <button onclick="changeCategory('MART', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🛒 大賣場/超市</button>
-          <button onclick="changeCategory('GATHER', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🍻 坐坐聚餐</button>
-        </div>
+        <h3 id="modalTitle" class="text-base font-black text-white">--</h3>
+        <p id="modalAddr" class="text-xs text-slate-400 mt-0.5">--</p>
       </div>
-
-      <!-- 候選結果統計與清單 -->
-      <div class="flex-1 flex flex-col min-h-0 border-t border-slate-800/80 pt-2">
-        <div class="flex justify-between items-center mb-1 text-[11px] text-slate-400">
-          <span id="listTitleHint">目前中心周邊設施（點選查看價目）</span>
-          <span id="filteredSummary" class="text-orange-400 font-mono font-bold">0 間</span>
-        </div>
-        <div id="storeList" class="flex-1 overflow-y-auto space-y-2 pr-1">
-          <!-- 項目動態產生 -->
-        </div>
+      <button onclick="closeModal()" class="text-slate-400 p-1 text-sm font-bold">✕</button>
+    </div>
+    
+    <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800 mb-3 text-xs">
+      <div class="flex justify-between pb-1.5 mb-1.5 border-b border-slate-800 text-slate-400">
+        <span>費率 / 平均消費</span>
+        <span id="modalRate" class="text-orange-400 font-bold font-mono">--</span>
       </div>
+      <div id="modalItems" class="space-y-1"></div>
     </div>
 
-    <!-- 右側：真正的互動地圖與標點規劃 -->
-    <div class="flex-1 h-full relative">
-      <div id="map"></div>
-
-      <!-- 地圖互動提示小浮窗 -->
-      <div class="absolute top-3 right-3 bg-slate-900/90 backdrop-blur-md px-3 py-2 rounded-xl border border-slate-800 text-[11px] text-slate-200 shadow-xl z-[1000] pointer-events-none flex items-center gap-2">
-        <span class="text-orange-400 text-base">📌</span>
-        <span>在地圖上<b>任意點擊</b>，可切換中心點規劃該處周邊吃喝與停車</span>
-      </div>
-
-      <!-- 詳細資訊底部抽屜彈窗（點擊卡片或地圖圖釘時彈出） -->
-      <div id="detailDrawer" class="absolute bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 bg-slate-900/95 border-2 border-orange-500 rounded-3xl p-4 shadow-2xl z-[1000] hidden backdrop-blur-md">
-        <div class="flex justify-between items-start mb-2">
-          <div>
-            <span id="drawerCatBadge" class="text-[10px] bg-orange-950 text-orange-400 border border-orange-700/60 px-2 py-0.5 rounded-full font-bold">
-              --
-            </span>
-            <h3 id="drawerTitle" class="text-lg font-black text-white mt-1 leading-snug">--</h3>
-            <p id="drawerAddr" class="text-xs text-slate-400 truncate">--</p>
-          </div>
-          <button onclick="closeDrawer()" class="text-slate-400 hover:text-white p-1 text-base">✕</button>
-        </div>
-
-        <!-- 價目表 / 停車計費資訊主區塊 -->
-        <div class="bg-slate-950 p-2.5 rounded-2xl border border-slate-800 mb-3 text-xs">
-          <div class="flex justify-between items-center pb-1.5 mb-1.5 border-b border-slate-800 text-slate-400">
-            <span>費用參考／預估均消</span>
-            <span id="drawerRate" class="text-orange-400 font-bold font-mono text-xs">--</span>
-          </div>
-          <div class="text-[11px] text-slate-400 font-medium mb-1" id="drawerDetailLabel">🔥 招牌品項 / 計費規則：</div>
-          <div id="drawerItemsBox" class="space-y-1">
-            <!-- 價目動態填入 -->
-          </div>
-        </div>
-
-        <div class="flex items-center justify-between gap-2">
-          <div class="text-xs text-slate-400">
-            <span id="drawerDistance">🛵 車程約 -- 分鐘</span>
-          </div>
-          <a id="drawerNavBtn" href="#" target="_blank" class="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs rounded-xl flex items-center gap-1 shadow-lg shadow-orange-500/30 transition">
-            <span>🚀</span> 導航前往 (Google Maps)
-          </a>
-        </div>
-      </div>
-
+    <div class="flex justify-between items-center">
+      <span id="modalDist" class="text-xs text-slate-400">約 -- 分鐘</span>
+      <a id="modalNavBtn" href="#" target="_blank" class="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs rounded-xl flex items-center gap-1 shadow">
+        🛵 Google 導航
+      </a>
     </div>
-  </main>
+  </div>
 
   <script>
-    // 預設中心點座標（台中沙鹿生活圈中心）
-    let centerCoords = { lat: 24.2335, lng: 120.5658 };
-    let myRealGps = { lat: 24.2335, lng: 120.5658 };
-    let currentMode = 'moto'; // 'moto' | 'car'
-    let currentCat = 'FOOD_FAST';
-    let currentRadiusKm = 4.0; // 預設 8 分鐘 (機車 4km)
-
+    // 預設中心座標 (沙鹿)
+    let centerPos = { lat: 24.2335, lng: 120.5658 };
+    let myGps = { lat: 24.2335, lng: 120.5658 };
+    let travelMode = 'moto'; // 'moto' | 'car'
+    let currentCat = 'PARKING';
+    let currentRadiusKm = 4.0;
+    
     let map = null;
-    let circleLayer = null;
-    let centerMarker = null;
-    let storeMarkersGroup = null;
+    let circle = null;
+    let centerPin = null;
+    let markersLayer = null;
 
-    // 海線/中港生活圈全方位豐富資料庫（美食、手搖、賣場超市、收費停車場）
-    const LIFE_DATABASE = [
-      // 🍟 速食連鎖
-      { id: "f1", name: "麥當勞-沙鹿沙田餐廳", cat: "FOOD_FAST", lat: 24.2341, lng: 120.5662, rating: 4.1, avg: "$140~$220", addr: "沙鹿區沙田路 107 號",
-        items: [{ n: "大麥克經典套餐", p: "$140" }, { n: "麥克鷄塊(10塊)套餐", p: "$169" }, { n: "雙層牛肉吉事堡套餐", p: "$130" }] },
-      { id: "f2", name: "肯德基 台中沙鹿餐廳", cat: "FOOD_FAST", lat: 24.2348, lng: 120.5667, rating: 3.9, avg: "$150~$250", addr: "沙鹿區沙田路 127 號",
-        items: [{ n: "咔啦脆雞(2塊)經典餐", p: "$175" }, { n: "原味蛋撻禮盒(6入)", p: "$240" }, { n: "青花椒香麻脆雞餐", p: "$185" }] },
-      { id: "f3", name: "摩斯漢堡 台中沙鹿店", cat: "FOOD_FAST", lat: 24.2338, lng: 120.5659, rating: 4.2, avg: "$130~$210", addr: "沙鹿區沙田路 101 號",
-        items: [{ n: "摩斯鱈魚堡套餐", p: "$135" }, { n: "海洋珍珠堡套餐", p: "$165" }, { n: "大杯冰紅茶", p: "$40" }] },
-      { id: "f4", name: "漢堡王 台中沙鹿店", cat: "FOOD_FAST", lat: 24.2392, lng: 120.5688, rating: 4.3, avg: "$140~$230", addr: "沙鹿區成功東街 86 號",
-        items: [{ n: "華堡雙層牛肉套餐", p: "$214" }, { n: "安格斯厚切牛肉堡", p: "$145" }, { n: "洋蔥圈(大份)", p: "$55" }] },
-      { id: "f5", name: "麥當勞-沙鹿中棲餐廳(附設得來速)", cat: "FOOD_FAST", lat: 24.2388, lng: 120.5792, rating: 4.0, avg: "$140~$220", addr: "沙鹿區台灣大道七段 333 號",
-        items: [{ n: "得來速免下車點餐取餐", p: "快取" }, { n: "勁辣鷄腿堡套餐", p: "$140" }, { n: "OREO冰炫風", p: "$59" }] },
-      { id: "f6", name: "胖老爹美式炸雞 沙鹿店", cat: "FOOD_FAST", lat: 24.2365, lng: 120.5655, rating: 4.1, avg: "$120~$200", addr: "沙鹿區中山路 321 號",
-        items: [{ n: "4號餐(雞腿+雞塊+翅)", p: "$150" }, { n: "全家炸雞特惠桶(8塊)", p: "$369" }] },
+    // 生活圈資料庫（含直接顯示在圖釘上的「短標籤 pinLabel」）
+    const DATA = [
+      // 🅿️ 停車場（實體費率直接標在圖釘上）
+      { id: "p1", cat: "PARKING", name: "沙鹿公有立體停車場", pinLabel: "$20/時", rate: "$20/小時 (當日上限 $150)", lat: 24.2342, lng: 120.5645, addr: "沙鹿區大同街 115 號",
+        details: [{ n: "日間計時收費", p: "$20 / 時" }, { n: "夜間優惠(22:00-08:00)", p: "$10 / 時" }, { n: "當日最高上限", p: "$150 / 天" }, { n: "室內立體遮雨", p: "有電梯" }] },
+      { id: "p2", cat: "PARKING", name: "光華路平面收費停車場", pinLabel: "$30/時", rate: "$30/小時 (無上限)", lat: 24.2381, lng: 120.5691, addr: "沙鹿區光華路與成功東街口",
+        details: [{ n: "平日每小時", p: "$30 / 時" }, { n: "假日每小時", p: "$40 / 時" }, { n: "無最高收費上限", p: "累計收費" }, { n: "車牌辨識", p: "支援行動支付" }] },
+      { id: "p3", cat: "PARKING", name: "沙鹿西站停車場", pinLabel: "車$20 機$20", rate: "汽車 $20/時 ｜ 機車 $20/次", lat: 24.2369, lng: 120.5605, addr: "沙鹿區青年路(沙鹿車站西出口)",
+        details: [{ n: "汽車計時", p: "$20 / 時" }, { n: "汽車當日最高上限", p: "$100 / 天" }, { n: "機車計次", p: "$20 / 次" }, { n: "搭火車通勤推薦", p: "位置多" }] },
+      { id: "p4", cat: "PARKING", name: "童綜合訪客停車場", pinLabel: "$30/時", rate: "$30/小時 (就醫折抵)", lat: 24.2490, lng: 120.5480, addr: "梧棲區臺灣大道八段 699 號",
+        details: [{ n: "一般臨停", p: "$30 / 時" }, { n: "看診持單折抵", p: "折抵 1~2 小時" }, { n: "地下防雨停車場", p: "室內" }] },
 
-      // 🍱 便當炒飯與麵餃
-      { id: "m1", name: "正忠排骨飯 沙鹿店", cat: "FOOD_MEAL", lat: 24.2325, lng: 120.5651, rating: 4.1, avg: "$100~$135", addr: "沙鹿區沙田路 85 號",
-        items: [{ n: "正忠招牌排骨飯便當", p: "$110" }, { n: "香雞腿飯便當", p: "$125" }, { n: "宮保雞丁飯便當", p: "$105" }] },
-      { id: "m2", name: "段純貞牛肉麵 台中沙鹿店", cat: "FOOD_MEAL", lat: 24.2378, lng: 120.5701, rating: 4.3, avg: "$180~$260", addr: "沙鹿區光華路 302 號",
-        items: [{ n: "經典紅燒腱心牛肉麵", p: "$205" }, { n: "老火原汁牛肉麵", p: "$195" }, { n: "紅油抄手(8顆)", p: "$95" }] },
-      { id: "m3", name: "八方雲集 沙鹿沙田店", cat: "FOOD_MEAL", lat: 24.2345, lng: 120.5660, rating: 4.0, avg: "$80~$140", addr: "沙鹿區沙田路 118 號",
-        items: [{ n: "招牌/韭菜鍋貼(10顆)", p: "$70" }, { n: "鮮蝦水餃(8顆)", p: "$80" }, { n: "酸辣湯/蕈菇湯", p: "$35" }] },
-      { id: "m4", name: "沙鹿肉圓福（在地70年老舖）", cat: "FOOD_MEAL", lat: 24.2360, lng: 120.5630, rating: 4.3, avg: "$60~$110", addr: "沙鹿區鎮江街 60 號",
-        items: [{ n: "低溫油泡手工肉圓", p: "$45" }, { n: "油豆腐肉湯", p: "$35" }, { n: "乾麵佐甜辣紅醬", p: "$40" }] },
-      { id: "m5", name: "悟饕池上飯包 沙鹿興安店", cat: "FOOD_MEAL", lat: 24.2355, lng: 120.5670, rating: 4.2, avg: "$95~$125", addr: "沙鹿區興安路 48 號",
-        items: [{ n: "正宗池上木盒飯包", p: "$105" }, { n: "黃金酥炸雞腿飯包", p: "$120" }] },
+      // 🍟 速食
+      { id: "f1", cat: "FAST", name: "麥當勞-沙鹿沙田餐廳", pinLabel: "$140套餐", rate: "均消 $140~$220", lat: 24.2341, lng: 120.5662, addr: "沙鹿區沙田路 107 號",
+        details: [{ n: "大麥克經典套餐", p: "$140" }, { n: "麥克鷄塊(10塊)套餐", p: "$169" }, { n: "雙層牛肉吉事堡套餐", p: "$130" }] },
+      { id: "f2", cat: "FAST", name: "肯德基 台中沙鹿餐廳", pinLabel: "$175套餐", rate: "均消 $150~$250", lat: 24.2348, lng: 120.5667, addr: "沙鹿區沙田路 127 號",
+        details: [{ n: "咔啦脆雞(2塊)餐", p: "$175" }, { n: "原味蛋撻禮盒(6入)", p: "$240" }] },
+      { id: "f3", cat: "FAST", name: "摩斯漢堡 台中沙鹿店", pinLabel: "$135套餐", rate: "均消 $130~$210", lat: 24.2338, lng: 120.5659, addr: "沙鹿區沙田路 101 號",
+        details: [{ n: "摩斯鱈魚堡套餐", p: "$135" }, { n: "海洋珍珠堡套餐", p: "$165" }, { n: "大杯冰紅茶", p: "$40" }] },
+      { id: "f4", cat: "FAST", name: "漢堡王 沙鹿店", pinLabel: "$145堡", rate: "均消 $140~$230", lat: 24.2392, lng: 120.5688, addr: "沙鹿區成功東街 86 號",
+        details: [{ n: "雙層牛肉華堡套餐", p: "$214" }, { n: "安格斯厚切牛肉堡", p: "$145" }] },
 
-      // 🥩 排餐鐵板與鍋物
-      { id: "s1", name: "成功牛排 沙鹿店", cat: "FOOD_STEAK", lat: 24.2389, lng: 120.5678, rating: 4.2, avg: "$180~$280", addr: "沙鹿區成功東街 25 號",
-        items: [{ n: "特選嫩肩牛排(附鐵板麵蛋)", p: "$180" }, { n: "嫩肩厚切牛排", p: "$260" }, { n: "自助濃湯爆米花無限", p: "$0" }] },
-      { id: "s2", name: "孫東寶台式牛排 沙鹿店", cat: "FOOD_STEAK", lat: 24.2361, lng: 120.5645, rating: 4.0, avg: "$190~$310", addr: "沙鹿區中山路 315 號",
-        items: [{ n: "主廚牛排(蘑菇/黑胡椒)", p: "$190" }, { n: "超大塊板腱牛排", p: "$290" }, { n: "爆漿餐包", p: "$15" }] },
-      { id: "s3", name: "六扇門時尚湯鍋 沙鹿光華店", cat: "FOOD_STEAK", lat: 24.2372, lng: 120.5695, rating: 4.3, avg: "$160~$220", addr: "沙鹿區光華路 280 號",
-        items: [{ n: "經典原味小火鍋", p: "$160" }, { n: "香濃起司牛奶鍋", p: "$200" }, { n: "豬油拌飯冷飲自助吧", p: "$0" }] },
-      { id: "s4", name: "肉多多火鍋 台中沙鹿店", cat: "FOOD_STEAK", lat: 24.2410, lng: 120.5621, rating: 4.7, avg: "$350~$550", addr: "沙鹿區中山路 497 號",
-        items: [{ n: "石頭爆炒鍋+梅花豬", p: "$349" }, { n: "海陸雙絕大肉盤", p: "$599" }, { n: "蔬食吧吃到飽", p: "$0" }] },
-      { id: "s5", name: "大埔鐵板燒 沙鹿店", cat: "FOOD_STEAK", lat: 24.2351, lng: 120.5653, rating: 4.1, avg: "$160~$250", addr: "沙鹿區中山路 290 號",
-        items: [{ n: "黑胡椒牛肉片套餐", p: "$170" }, { n: "松阪豬肉套餐", p: "$220" }, { n: "高麗菜/豆芽無限續加", p: "$0" }] },
+      // 🍱 便當麵餃
+      { id: "m1", cat: "MEAL", name: "正忠排骨飯 沙鹿店", pinLabel: "$110排骨", rate: "均消 $100~$130", lat: 24.2325, lng: 120.5651, addr: "沙鹿區沙田路 85 號",
+        details: [{ n: "招牌排骨飯便當", p: "$110" }, { n: "正忠香雞腿飯便當", p: "$125" }] },
+      { id: "m2", cat: "MEAL", name: "段純貞牛肉麵 沙鹿店", pinLabel: "$205牛麵", rate: "均消 $180~$260", lat: 24.2378, lng: 120.5701, addr: "沙鹿區光華路 302 號",
+        details: [{ n: "原汁紅燒腱心牛肉麵", p: "$205" }, { n: "紅油抄手(8顆)", p: "$95" }] },
+      { id: "m3", cat: "MEAL", name: "八方雲集 沙鹿沙田店", pinLabel: "$70水餃", rate: "均消 $80~$140", lat: 24.2345, lng: 120.5660, addr: "沙鹿區沙田路 118 號",
+        details: [{ n: "招牌鍋貼(10顆)", p: "$70" }, { n: "酸辣湯", p: "$35" }] },
 
-      // 🥦 素食炸物蔬食
-      { id: "v1", name: "盛記香豆富（全素臭豆腐專賣）", cat: "FOOD_VEGE", lat: 24.2312, lng: 120.5641, rating: 4.6, avg: "$80~$150", addr: "沙鹿區鎮南路二段 617 號",
-        items: [{ n: "現炸脆皮香豆腐(大份)", p: "$70" }, { n: "秘醬酥炸香豆包", p: "$65" }, { n: "酥炸全素皮蛋", p: "$40" }] },
-      { id: "v2", name: "杜記素食鹹酥雞", cat: "FOOD_VEGE", lat: 24.2385, lng: 120.5679, rating: 4.5, avg: "$90~$160", addr: "沙鹿區成功東街商圈",
-        items: [{ n: "素鹽酥G塊(九層塔香)", p: "$60" }, { n: "現炸杏鮑菇", p: "$50" }, { n: "甘梅地瓜條", p: "$45" }] },
-      { id: "v3", name: "這都有炸物（綜合埔里小農炸菇）", cat: "FOOD_VEGE", lat: 24.2275, lng: 120.5765, rating: 4.4, avg: "$100~$180", addr: "沙鹿區北勢東路 588 號",
-        items: [{ n: "綜合炸菇大盛盤(5種菇)", p: "$120" }, { n: "酥炸厚豆包", p: "$35" }, { n: "特調椒鹽四季豆", p: "$40" }] },
+      // 🥩 排餐火鍋
+      { id: "s1", cat: "STEAK", name: "成功牛排 沙鹿店", pinLabel: "$180牛排", rate: "排餐 $180 起", lat: 24.2389, lng: 120.5678, addr: "沙鹿區成功東街 25 號",
+        details: [{ n: "特選嫩肩牛排(附麵蛋)", p: "$180" }, { n: "厚切牛排", p: "$260" }, { n: "爆米花濃湯無限", p: "$0" }] },
+      { id: "s2", cat: "STEAK", name: "六扇門小火鍋 沙鹿光華店", pinLabel: "$160鍋", rate: "火鍋 $160 起", lat: 24.2372, lng: 120.5695, addr: "沙鹿區光華路 280 號",
+        details: [{ n: "經典原味豬肉鍋", p: "$160" }, { n: "香濃起司牛奶鍋", p: "$200" }, { n: "冷飲爆米花自助吧", p: "$0" }] },
 
-      // 🧋 飲料甜品
-      { id: "d1", name: "五桐號 WooTea 沙鹿靜宜店", cat: "DRINK", lat: 24.2278, lng: 120.5750, rating: 4.4, avg: "$45~$80", addr: "沙鹿區北勢東路 537 號",
-        items: [{ n: "招牌五桐茶佐杏仁凍", p: "$50" }, { n: "最完美手沖泰奶", p: "$65" }, { n: "荔枝冰茶凍飲", p: "$60" }] },
-      { id: "d2", name: "得正#台中沙鹿計畫", cat: "DRINK", lat: 24.2350, lng: 120.5648, rating: 4.5, avg: "$40~$75", addr: "沙鹿區中山路 248 號",
-        items: [{ n: "檸檬春烏龍", p: "$55" }, { n: "芝士奶蓋焙烏龍", p: "$60" }, { n: "烘吉茶奶凍拿鐵", p: "$70" }] },
-      { id: "d3", name: "麻古茶坊 沙鹿沙田店", cat: "DRINK", lat: 24.2349, lng: 120.5668, rating: 4.3, avg: "$45~$95", addr: "沙鹿區沙田路 133 號",
-        items: [{ n: "柳橙果粒茶(大杯)", p: "$75" }, { n: "楊枝甘露系列", p: "$90" }, { n: "金萱雙Q", p: "$45" }] },
-      { id: "d4", name: "清原芋圓 沙鹿北勢店", cat: "DRINK", lat: 24.2285, lng: 120.5745, rating: 4.3, avg: "$50~$90", addr: "沙鹿區北勢東路 512 號",
-        items: [{ n: "芋見幸福招牌芋泥冰", p: "$80" }, { n: "雙芋奶茶佐珍珠", p: "$65" }, { n: "暖心燒仙草", p: "$55" }] },
+      // 🥦 素食炸物
+      { id: "v1", cat: "VEGE", name: "盛記香豆富（全素臭豆腐）", pinLabel: "$70豆腐", rate: "全素炸物", lat: 24.2312, lng: 120.5641, addr: "沙鹿區鎮南路二段 617 號",
+        details: [{ n: "現炸脆皮香豆腐", p: "$70" }, { n: "秘醬酥炸香豆包", p: "$65" }] },
+      { id: "v2", cat: "VEGE", name: "杜記素食鹹酥雞", pinLabel: "$60素G", rate: "素炸物專賣", lat: 24.2385, lng: 120.5679, addr: "沙鹿區成功東街",
+        details: [{ n: "素鹽酥G塊", p: "$60" }, { n: "現炸杏鮑菇", p: "$50" }] },
 
-      // 🅿️ 收費停車場（包含實體收費費率與規則）
-      { id: "p1", name: "沙鹿公有立體停車場", cat: "PARKING", lat: 24.2342, lng: 120.5645, rating: 4.0, avg: "小型車 $20/小時", addr: "沙鹿區大同街 115 號",
-        items: [{ n: "小型車計時收費", p: "$20 / 時" }, { n: "夜間優惠時段(22-08)", p: "$10 / 時" }, { n: "當日最高收費上限", p: "$150 / 日" }, { n: "室內立體平面車位", p: "有遮雨" }] },
-      { id: "p2", name: "光華路平面收費停車場", cat: "PARKING", lat: 24.2381, lng: 120.5691, rating: 4.1, avg: "小型車 $30/小時", addr: "沙鹿區光華路與成功東街口",
-        items: [{ n: "平日收費標準", p: "$30 / 時" }, { n: "假日收費標準", p: "$40 / 時" }, { n: "全日無最高上限", p: "累計計費" }, { n: "戶外車位/車牌自動辨識", p: "悠遊卡/LINE Pay" }] },
-      { id: "p3", name: "沙鹿車站西站停車場", cat: "PARKING", lat: 24.2369, lng: 120.5605, rating: 4.2, avg: "小型車 $20/時 ｜ 機車 $20/次", addr: "沙鹿區青年路(沙鹿車站西出口)",
-        items: [{ n: "汽車臨停計時", p: "$20 / 時" }, { n: "汽車單日最高上限", p: "$100 / 日" }, { n: "機車計次收費", p: "$20 / 次(跨日另計)" }, { n: "火車通勤停放推薦", p: "位子多" }] },
-      { id: "p4", name: "中港童綜合醫院訪客停車場", cat: "PARKING", lat: 24.2490, lng: 120.5480, rating: 4.0, avg: "小型車 $30/小時", addr: "梧棲區臺灣大道八段 699 號",
-        items: [{ n: "汽車第1小時起算", p: "$30 / 時" }, { n: "就診蓋章折抵優惠", p: "折抵 1~2 小時" }, { n: "室內地下停車場", p: "防曬防雨" }] },
+      // 🧋 飲料
+      { id: "d1", cat: "DRINK", name: "得正#台中沙鹿計畫", pinLabel: "$55烏龍", rate: "飲料 $40~$75", lat: 24.2350, lng: 120.5648, addr: "沙鹿區中山路 248 號",
+        details: [{ n: "檸檬春烏龍", p: "$55" }, { n: "芝士奶蓋焙烏龍", p: "$60" }] },
+      { id: "d2", cat: "DRINK", name: "五桐號 沙鹿靜宜店", pinLabel: "$50五桐茶", rate: "飲料 $45~$80", lat: 24.2278, lng: 120.5750, addr: "沙鹿區北勢東路 537 號",
+        details: [{ n: "招牌五桐茶佐杏仁凍", p: "$50" }, { n: "手沖泰奶", p: "$65" }] },
 
-      // 🛒 大賣場／全聯／大型超市
-      { id: "m_costco", name: "Costco 好市多 台中店 (開車規劃)", cat: "MART", lat: 24.1332, lng: 120.6480, rating: 4.5, avg: "量販批發/會員制", addr: "南屯區文心南三路 288 號",
-        items: [{ n: "烤全雞/美式大披薩", p: "$189 / $300" }, { n: "特選無骨牛小排燒烤片", p: "秤重計價" }, { n: "地下大型停車場", p: "消費折抵" }] },
-      { id: "m_carrefour", name: "家樂福 沙鹿店 (大型量販店)", cat: "MART", lat: 24.2375, lng: 120.5710, rating: 4.2, avg: "賣場/家樂福超市/美食街", addr: "沙鹿區光華路 336 號",
-        items: [{ n: "量販生鮮日用品一站購足", p: "常態特價" }, { n: "附設美食街(爭鮮/三商巧福)", p: "內用冷氣" }, { n: "大型專用汽車停車場", p: "消費滿額免費停車" }] },
-      { id: "m_px1", name: "全聯福利中心 沙鹿沙田店", cat: "MART", lat: 24.2315, lng: 120.5658, rating: 4.1, avg: "生鮮超市/乾貨", addr: "沙鹿區沙田路 66 號",
-        items: [{ n: "生鮮蔬果/特選冷藏肉品", p: "每日特價" }, { n: "現烤麵包與現煮熱咖啡", p: "$25~$35" }, { n: "門口機車停放格", p: "免費" }] },
-
-      // 🍻 坐坐聚餐（冷氣、大空間、適合長聊）
-      { id: "g1", name: "異人館咖啡部屋 沙鹿店", cat: "GATHER", lat: 24.2405, lng: 120.5635, rating: 4.1, avg: "$360~$520", addr: "沙鹿區中山路 478 號",
-        items: [{ n: "川味水煮牛煲套餐(附飲品甜點)", p: "$390" }, { n: "酸白菜海鮮鍋套餐", p: "$410" }, { n: "炸物綜合拼盤", p: "$260" }, { n: "附設專屬汽車停車格", p: "免費" }] },
-      { id: "g2", name: "老井極上燒肉 福科店 (開車聚餐首選)", cat: "GATHER", lat: 24.1882, lng: 120.6120, rating: 4.8, avg: "$900~$1800", addr: "西屯區福科路 567 號",
-        items: [{ n: "極上安格斯牛雙人套餐", p: "$1990" }, { n: "特選豚肉海鮮雙人套餐", p: "$2190" }, { n: "手捲干貝/無限主廚雞湯", p: "$0" }, { n: "周邊特約收費停車場", p: "可折抵" }] },
-      { id: "g3", name: "屋馬燒肉 國安店 (米平方商場)", cat: "GATHER", lat: 24.1950, lng: 120.6125, rating: 4.8, avg: "$900~$1700", addr: "西屯區國安一路 168 號 B1",
-        items: [{ n: "經典霜降牛雙人套餐", p: "$2080" }, { n: "極品全牛特選雙人盛合", p: "$2380" }, { n: "招牌海鮮粥", p: "推薦換購" }, { n: "米平方商場地下停車場", p: "消費折抵" }] }
+      // 🛒 賣場
+      { id: "mart1", cat: "MART", name: "家樂福 沙鹿店 (大賣場)", pinLabel: "大賣場/停", rate: "滿額免費停車", lat: 24.2375, lng: 120.5710, addr: "沙鹿區光華路 336 號",
+        details: [{ n: "賣場量販/美食街", p: "全方位" }, { n: "大型專用停車場", p: "消費折抵" }] },
+      { id: "mart2", cat: "MART", name: "全聯 沙鹿沙田店", pinLabel: "全聯超市", rate: "生鮮超市", lat: 24.2315, lng: 120.5658, addr: "沙鹿區沙田路 66 號",
+        details: [{ n: "生鮮蔬果乾貨", p: "特價" }, { n: "門口機車位", p: "免費" }] }
     ];
 
-    let currentStores = [];
+    window.addEventListener('DOMContentLoaded', () => {
+      initMap();
+      locateMe();
+    });
 
-    // 初始化地圖與定位
-    window.onload = () => {
-      initLeafletMap();
-      initGeoLocation();
-    };
-
-    function initLeafletMap() {
-      // 採用 CartoDB Dark 高對比暗色圖資（乾淨、速度極快、免 API Key）
+    function initMap() {
+      // 建立地圖
       map = L.map('map', {
-        center: [centerCoords.lat, centerCoords.lng],
+        center: [centerPos.lat, centerPos.lng],
         zoom: 14,
-        zoomControl: true
+        zoomControl: false // 手機端保持乾淨
       });
 
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-        maxZoom: 19
+      // 採用極度穩定、免註冊的 OpenStreetMap 官方高清圖磚
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap'
       }).addTo(map);
 
-      storeMarkersGroup = L.layerGroup().addTo(map);
+      markersLayer = L.layerGroup().addTo(map);
 
-      // 中心目標圖釘（可點擊移動）
-      const centerIcon = L.divIcon({
-        className: 'custom-center-pin',
-        html: `<div class="flex items-center justify-center w-8 h-8 bg-orange-500 text-white rounded-full border-2 border-white shadow-xl animate-bounce">📍</div>`,
-        iconSize: [32, 32],
-        iconAnchor: [16, 32]
-      });
+      // 中心標記
+      const centerHtml = `<div class="center-pointer"></div>`;
+      centerPin = L.marker([centerPos.lat, centerPos.lng], {
+        icon: L.divIcon({ className: '', html: centerHtml, iconSize: [20, 20] })
+      }).addTo(map);
 
-      centerMarker = L.marker([centerCoords.lat, centerCoords.lng], { icon: centerIcon }).addTo(map);
-
-      // 半徑圈
-      circleLayer = L.circle([centerCoords.lat, centerCoords.lng], {
+      // 半徑範圍圈
+      circle = L.circle([centerPos.lat, centerPos.lng], {
         radius: currentRadiusKm * 1000,
         color: '#f97316',
-        fillColor: '#ea580c',
-        fillOpacity: 0.1,
+        fillColor: '#f97316',
+        fillOpacity: 0.12,
         weight: 2,
-        dashArray: '5, 8'
+        dashArray: '4, 6'
       }).addTo(map);
 
-      // ⭐ 核心功能：在地圖上任意點擊標點，立即規劃那裡的周邊！
+      // ⭐ 點擊地圖任意處移動中心點
       map.on('click', (e) => {
-        setNewCenter(e.latlng.lat, e.latlng.lng, "自訂規劃標點");
+        setCenter(e.latlng.lat, e.latlng.lng, "自選標點位置");
       });
+
+      // 修正手機高度時序 Bug
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 300);
     }
 
-    function initGeoLocation() {
+    function locateMe() {
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           pos => {
-            myRealGps = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-            setNewCenter(myRealGps.lat, myRealGps.lng, "我的真實位置");
+            myGps = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            setCenter(myGps.lat, myGps.lng, "我的 GPS 位置");
+            map.setView([myGps.lat, myGps.lng], 14);
           },
           err => {
-            setNewCenter(centerCoords.lat, centerCoords.lng, "沙鹿市區中心 (預設)");
+            setCenter(centerPos.lat, centerPos.lng, "沙鹿市區中心 (預設)");
           },
           { enableHighAccuracy: true, timeout: 5000 }
         );
       } else {
-        setNewCenter(centerCoords.lat, centerCoords.lng, "沙鹿市區中心 (預設)");
+        setCenter(centerPos.lat, centerPos.lng, "沙鹿市區中心 (預設)");
       }
     }
 
-    function resetToMyLocation() {
-      setNewCenter(myRealGps.lat, myRealGps.lng, "我的真實位置");
-      map.flyTo([myRealGps.lat, myRealGps.lng], 14);
+    function setCenter(lat, lng, label) {
+      centerPos = { lat, lng };
+      centerPin.setLatLng([lat, lng]);
+      circle.setLatLng([lat, lng]);
+      document.getElementById('locHint').innerText = `📍 中心：${label}`;
+      updateView();
     }
 
-    // 變更規劃中心點（自己目前位置 OR 地圖點擊自選位置）
-    function setNewCenter(lat, lng, desc = "") {
-      centerCoords = { lat, lng };
-      centerMarker.setLatLng([lat, lng]);
-      circleLayer.setLatLng([lat, lng]);
-      document.getElementById('centerLocText').innerText = `📍 中心點：${desc} (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
-      refreshData();
-    }
-
-    // 交通模式切換 (機車 vs 開車)
     function setMode(mode) {
-      currentMode = mode;
-      const btnMoto = document.getElementById('btnMoto');
-      const btnCar = document.getElementById('btnCar');
+      travelMode = mode;
+      const btnM = document.getElementById('btnMoto');
+      const btnC = document.getElementById('btnCar');
       if (mode === 'moto') {
-        btnMoto.className = 'px-2.5 py-1 font-bold rounded-lg bg-orange-600 text-white transition';
-        btnCar.className = 'px-2.5 py-1 font-bold rounded-lg text-slate-400 hover:text-slate-200 transition';
+        btnM.className = 'px-2 py-1 font-bold rounded-md bg-orange-600 text-white';
+        btnC.className = 'px-2 py-1 font-bold rounded-md text-slate-400';
       } else {
-        btnCar.className = 'px-2.5 py-1 font-bold rounded-lg bg-orange-600 text-white transition';
-        btnMoto.className = 'px-2.5 py-1 font-bold rounded-lg text-slate-400 hover:text-slate-200 transition';
+        btnC.className = 'px-2 py-1 font-bold rounded-md bg-orange-600 text-white';
+        btnM.className = 'px-2 py-1 font-bold rounded-md text-slate-400';
       }
-      onRadiusSliderChange(document.getElementById('timeSlider').value);
+      onRadiusChange(document.getElementById('timeSlider').value);
     }
 
-    // 滑桿車程時間換算半徑公里數
-    function onRadiusSliderChange(minutes) {
-      const min = parseInt(minutes);
-      document.getElementById('timeVal').innerText = `${min} 分鐘`;
-
-      // 機車以市區約 30 km/h (0.5 km/分)，開車以 45 km/h (0.75 km/分) 計算
-      const kmPerMin = currentMode === 'moto' ? 0.5 : 0.75;
-      currentRadiusKm = parseFloat((min * kmPerMin).toFixed(1));
+    function onRadiusChange(min) {
+      const minutes = parseInt(min);
+      document.getElementById('timeVal').innerText = `${minutes} 分`;
       
-      document.getElementById('distVal').innerText = `約 ${currentRadiusKm} km`;
-      if (circleLayer) circleLayer.setRadius(currentRadiusKm * 1000);
-
-      refreshData();
+      // 機車 0.5km/分；開車 0.75km/分
+      const factor = travelMode === 'moto' ? 0.5 : 0.75;
+      currentRadiusKm = parseFloat((minutes * factor).toFixed(1));
+      document.getElementById('distVal').innerText = `${currentRadiusKm} km`;
+      
+      if (circle) circle.setRadius(currentRadiusKm * 1000);
+      updateView();
     }
 
-    // 分類按鈕切換
-    function changeCategory(catKey, btn) {
-      currentCat = catKey;
+    function changeCat(cat, btn) {
+      currentCat = cat;
       document.querySelectorAll('.cat-pill').forEach(b => {
-        b.className = 'cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition';
+        b.className = 'cat-pill px-3 py-1.5 bg-slate-800 text-slate-300 font-medium rounded-xl whitespace-nowrap border border-slate-700';
       });
-      btn.className = 'cat-pill active py-2 px-1 bg-orange-600 text-[11px] font-bold rounded-xl border border-orange-500 text-center transition';
-      refreshData();
+      btn.className = 'cat-pill active px-3 py-1.5 bg-sky-600 text-white font-bold rounded-xl whitespace-nowrap border border-sky-400';
+      updateView();
     }
 
-    // 計算兩點球面距離 (公里)
-    function getDistanceKm(lat1, lon1, lat2, lon2) {
+    function getDistance(lat1, lon1, lat2, lon2) {
       const R = 6371;
       const dLat = (lat2 - lat1) * Math.PI / 180;
       const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -395,150 +347,121 @@
       return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
-    // 核心資料更新與過濾
-    function refreshData() {
-      // 1. 根據與當前中心點的實際距離篩選
-      currentStores = LIFE_DATABASE.filter(s => {
-        const d = getDistanceKm(centerCoords.lat, centerCoords.lng, s.lat, s.lng);
-        s.currentDist = d; // 動態記錄距離
-        return s.cat === currentCat && d <= currentRadiusKm;
+    function updateView() {
+      // 篩選範圍內
+      let filtered = DATA.filter(item => {
+        const d = getDistance(centerPos.lat, centerPos.lng, item.lat, item.lng);
+        item.currentDist = d;
+        return item.cat === currentCat && d <= currentRadiusKm;
       });
 
       // 依距離由近到遠排序
-      currentStores.sort((a, b) => a.currentDist - b.currentDist);
+      filtered.sort((a,b) => a.currentDist - b.currentDist);
 
-      // 防呆：若範圍拉太小沒有店家，至少列出該分類離此處最近的 2 間
-      if (currentStores.length === 0) {
-        const allInCat = LIFE_DATABASE.filter(s => s.cat === currentCat);
-        allInCat.forEach(s => s.currentDist = getDistanceKm(centerCoords.lat, centerCoords.lng, s.lat, s.lng));
-        allInCat.sort((a, b) => a.currentDist - b.currentDist);
-        currentStores = allInCat.slice(0, 2);
+      // 防呆保護
+      if (filtered.length === 0) {
+        const fallback = DATA.filter(d => d.cat === currentCat);
+        fallback.forEach(f => f.currentDist = getDistance(centerPos.lat, centerPos.lng, f.lat, f.lng));
+        fallback.sort((a,b) => a.currentDist - b.currentDist);
+        filtered = fallback.slice(0, 2);
       }
 
-      document.getElementById('poolBadge').innerText = `符合 ${currentStores.length} 處`;
-      document.getElementById('filteredSummary').innerText = `${currentStores.length} 間`;
-
-      renderList();
-      renderMapMarkers();
+      document.getElementById('poolBadge').innerText = `${filtered.length} 處`;
+      renderList(filtered);
+      renderPins(filtered);
     }
 
-    // 渲染左側卡片列表（包含價目／費率預覽）
-    function renderList() {
-      const listContainer = document.getElementById('storeList');
-      listContainer.innerHTML = '';
+    // 渲染清單
+    function renderList(items) {
+      const box = document.getElementById('storeList');
+      box.innerHTML = '';
 
-      currentStores.forEach((s, idx) => {
-        const estMin = currentMode === 'moto' ? Math.round(s.currentDist * 2) + 1 : Math.round(s.currentDist * 1.4) + 2;
-        const card = document.createElement('div');
-        card.className = 'p-3 bg-slate-950/80 hover:bg-slate-900 border border-slate-800/80 rounded-2xl cursor-pointer transition flex flex-col gap-1.5 shadow';
-        card.onclick = () => focusStore(s);
+      items.forEach(it => {
+        const estMin = travelMode === 'moto' ? Math.round(it.currentDist * 2) + 1 : Math.round(it.currentDist * 1.4) + 2;
+        const div = document.createElement('div');
+        div.className = 'p-3 bg-slate-950/80 hover:bg-slate-800 border border-slate-800 rounded-xl cursor-pointer transition flex justify-between items-center';
+        div.onclick = () => openInfo(it);
 
-        // 預覽前兩項菜單或費率
-        const samplePreview = s.items.slice(0, 2).map(m => `${m.n} <span class="text-orange-400 font-mono font-bold">${m.p}</span>`).join(' ｜ ');
-
-        card.innerHTML = `
-          <div class="flex justify-between items-start">
-            <div>
-              <div class="font-black text-slate-100 text-xs flex items-center gap-1.5">
-                <span>${s.name}</span>
-                <span class="text-[10px] text-amber-400 font-mono font-bold">⭐ ${s.rating}</span>
-              </div>
-              <div class="text-[10px] text-slate-500 truncate mt-0.5">${s.addr}</div>
+        div.innerHTML = `
+          <div>
+            <div class="font-bold text-sm text-slate-100 flex items-center gap-1.5">
+              <span>${it.name}</span>
             </div>
-            <div class="text-right shrink-0">
-              <span class="text-[10px] bg-slate-900 text-orange-400 px-2 py-0.5 rounded font-mono font-bold border border-slate-800">
-                ${s.avg}
-              </span>
+            <div class="text-[11px] text-slate-400 mt-0.5 truncate">${it.addr}</div>
+            <div class="text-[10px] text-orange-400 font-bold mt-1">
+              ${travelMode === 'moto' ? '🛵' : '🚗'} 約 ${estMin} 分鐘 (${it.currentDist.toFixed(1)} km)
             </div>
           </div>
-          <div class="text-[11px] text-slate-300 bg-slate-900/60 px-2.5 py-1.5 rounded-lg border border-slate-800/50 flex justify-between items-center">
-            <span class="truncate text-slate-400 text-[10px]">${samplePreview}</span>
-            <span class="text-[10px] text-orange-400 shrink-0 font-medium ml-2">${currentMode === 'moto' ? '🛵' : '🚗'} ${estMin} 分鐘</span>
+          <div class="text-right shrink-0">
+            <span class="text-xs font-mono font-bold px-2 py-1 rounded-lg ${it.cat === 'PARKING' ? 'bg-sky-950 text-sky-300 border border-sky-800' : 'bg-orange-950 text-orange-300 border border-orange-800'}">
+              ${it.pinLabel}
+            </span>
           </div>
         `;
-        listContainer.appendChild(card);
+        box.appendChild(div);
       });
     }
 
-    // 繪製地圖上的真實圖釘
-    function renderMapMarkers() {
-      storeMarkersGroup.clearLayers();
+    // ⭐ 核心重點：圖釘直接標示價格膠囊
+    function renderPins(items) {
+      markersLayer.clearLayers();
 
-      currentStores.forEach(s => {
-        // 依分類區分圖釘圖示
-        let iconSymbol = '🍔';
-        if (s.cat === 'PARKING') iconSymbol = '🅿️';
-        if (s.cat === 'MART') iconSymbol = '🛒';
-        if (s.cat === 'DRINK') iconSymbol = '🧋';
-        if (s.cat === 'FOOD_STEAK') iconSymbol = '🥩';
-        if (s.cat === 'FOOD_VEGE') iconSymbol = '🥦';
-        if (s.cat === 'GATHER') iconSymbol = '🍻';
+      items.forEach(it => {
+        let pinColorClass = 'pin-parking';
+        let iconPrefix = '🅿️';
+        if (it.cat !== 'PARKING') {
+          pinColorClass = 'pin-food';
+          iconPrefix = '🍽️';
+        }
+        if (it.cat === 'MART') { pinColorClass = 'pin-mart'; iconPrefix = '🛒'; }
+        if (it.cat === 'DRINK') { pinColorClass = 'pin-drink'; iconPrefix = '🧋'; }
 
-        const customMarkerIcon = L.divIcon({
-          className: 'custom-store-pin',
-          html: `
-            <div class="flex items-center justify-center w-7 h-7 bg-slate-900 text-white rounded-full border-2 border-orange-500 shadow-md font-bold text-xs hover:scale-125 transition">
-              ${iconSymbol}
-            </div>
-          `,
-          iconSize: [28, 28],
-          iconAnchor: [14, 14]
+        // 直接把價格包進圖釘 HTML 裡
+        const html = `
+          <div class="price-pin ${pinColorClass}">
+            <span>${iconPrefix}</span>
+            <span>${it.pinLabel}</span>
+          </div>
+        `;
+
+        const pinIcon = L.divIcon({
+          className: '',
+          html: html,
+          iconSize: [60, 24]
         });
 
-        const marker = L.marker([s.lat, s.lng], { icon: customMarkerIcon });
-        
-        // 點擊圖釘彈出抽屜
-        marker.on('click', () => {
-          focusStore(s);
-        });
-
-        storeMarkersGroup.addLayer(marker);
+        const m = L.marker([it.lat, it.lng], { icon: pinIcon });
+        m.on('click', () => openInfo(it));
+        markersLayer.addLayer(m);
       });
     }
 
-    // 聚焦特定設施並開啟底部抽屜
-    function focusStore(store) {
-      map.flyTo([store.lat, store.lng], 16, { duration: 0.8 });
+    function openInfo(it) {
+      map.flyTo([it.lat, it.lng], 16, { duration: 0.6 });
 
-      const estMin = currentMode === 'moto' ? Math.round(store.currentDist * 2) + 1 : Math.round(store.currentDist * 1.4) + 2;
+      const estMin = travelMode === 'moto' ? Math.round(it.currentDist * 2) + 1 : Math.round(it.currentDist * 1.4) + 2;
 
-      // 填入詳細資訊
-      document.getElementById('drawerTitle').innerText = store.name;
-      document.getElementById('drawerAddr').innerText = store.addr;
-      document.getElementById('drawerRate').innerText = store.avg;
-      document.getElementById('drawerDistance').innerText = `${currentMode === 'moto' ? '🛵 機車' : '🚗 開車'} 約 ${estMin} 分鐘 (${store.currentDist.toFixed(1)} km)`;
-      
-      const badge = document.getElementById('drawerCatBadge');
-      if (store.cat === 'PARKING') {
-        badge.innerText = '🅿️ 收費停車場';
-        document.getElementById('drawerDetailLabel').innerText = '📋 詳細計費規則與上限：';
-      } else if (store.cat === 'MART') {
-        badge.innerText = '🛒 大賣場/超市';
-        document.getElementById('drawerDetailLabel').innerText = '🔥 賣場特色與配套：';
-      } else {
-        badge.innerText = '🍽️ 美食餐飲';
-        document.getElementById('drawerDetailLabel').innerText = '🔥 推薦必點 & 參考價位：';
-      }
+      document.getElementById('modalTitle').innerText = it.name;
+      document.getElementById('modalAddr').innerText = it.addr;
+      document.getElementById('modalRate').innerText = it.rate;
+      document.getElementById('modalDist').innerText = `${travelMode === 'moto' ? '🛵 機車' : '🚗 開車'} 約 ${estMin} 分鐘 (${it.currentDist.toFixed(1)} km)`;
 
-      // 產生完整價目項目
-      const itemsBox = document.getElementById('drawerItemsBox');
-      itemsBox.innerHTML = store.items.map(item => `
+      const itemsBox = document.getElementById('modalItems');
+      itemsBox.innerHTML = it.details.map(d => `
         <div class="flex justify-between items-center py-0.5 border-b border-slate-900 text-[11px]">
-          <span class="text-slate-300 truncate">${item.n}</span>
-          <span class="text-orange-400 font-mono font-bold ml-2">${item.p}</span>
+          <span class="text-slate-300">${d.n}</span>
+          <span class="text-orange-400 font-mono font-bold">${d.p}</span>
         </div>
       `).join('');
 
-      // Google 導航 deep link
-      const travelMode = currentMode === 'moto' ? 'motorcycle' : 'driving';
-      const navUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(store.name + ' ' + store.addr)}&travelmode=${travelMode}`;
-      document.getElementById('drawerNavBtn').href = navUrl;
+      const gMode = travelMode === 'moto' ? 'motorcycle' : 'driving';
+      document.getElementById('modalNavBtn').href = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(it.name + ' ' + it.addr)}&travelmode=${gMode}`;
 
-      document.getElementById('detailDrawer').classList.remove('hidden');
+      document.getElementById('infoModal').classList.remove('hidden');
     }
 
-    function closeDrawer() {
-      document.getElementById('detailDrawer').classList.add('hidden');
+    function closeModal() {
+      document.getElementById('infoModal').classList.add('hidden');
     }
   </script>
 </body>
