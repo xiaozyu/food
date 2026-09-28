@@ -1,929 +1,545 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>今天吃什麼？美食轉盤決策器</title>
-  <!-- Tailwind CSS CDN -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>出門生活圈決策助手 - 附近美食/賣場/停車場雷達</title>
+  
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Phosphor Icons for modern vector icons -->
-  <script src="https://unpkg.com/@phosphor-icons/web"></script>
-  <!-- Canvas Confetti -->
-  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              50: '#fff7ed',
-              100: '#ffedd5',
-              400: '#fb923c',
-              500: '#f97316',
-              600: '#ea580c',
-              700: '#c2410c'
-            },
-            surface: {
-              DEFAULT: '#1e293b',
-              card: '#0f172a',
-              highlight: '#334155'
-            }
-          }
-        }
-      }
-    }
-  </script>
+  
+  <!-- Leaflet Map CSS & JS (完全免費、免 API Key、零破圖) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
-    body {
-      font-family: 'Noto Sans TC', 'Plus Jakarta Sans', sans-serif;
-      -webkit-tap-highlight-color: transparent;
+    #map { height: 100%; width: 100%; z-index: 1; }
+    /* 自訂圖釘跳動效果 */
+    .leaflet-popup-content-wrapper {
+      background: #0f172a;
+      color: #f8fafc;
+      border: 1px solid #334155;
+      border-radius: 1rem;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
     }
-    .wheel-pointer {
-      position: absolute;
-      top: -12px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 0;
-      height: 0;
-      border-left: 18px solid transparent;
-      border-right: 18px solid transparent;
-      border-top: 30px solid #f97316;
-      filter: drop-shadow(0 4px 6px rgba(0,0,0,0.4));
-      z-index: 20;
-    }
-    .glass-card {
-      background: rgba(30, 41, 59, 0.82);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-    }
-    /* Hide scrollbars on category carousel */
-    .no-scrollbar::-webkit-scrollbar {
-      display: none;
-    }
-    .no-scrollbar {
-      -ms-overflow-style: none;
-      scrollbar-width: none;
-    }
+    .leaflet-popup-tip { background: #0f172a; }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen pb-12 select-none antialiased flex flex-col items-center">
+<body class="bg-slate-950 text-slate-100 flex flex-col h-screen overflow-hidden font-sans">
 
-  <header class="w-full max-w-md px-4 pt-5 pb-3 sticky top-0 z-30 glass-card border-b border-slate-800">
-    <div class="flex items-center justify-between">
-      <div class="flex items-center space-x-2">
-        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-orange-500 to-amber-400 flex items-center justify-center shadow-lg shadow-orange-500/20">
-          <i class="ph-bold ph-fork-knife text-xl text-white"></i>
+  <!-- 頂部列：中心點位置顯示、交通模式與重置定位 -->
+  <header class="bg-slate-900 border-b border-slate-800 px-4 py-2.5 flex items-center justify-between shrink-0 shadow-lg z-20">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl">🧭</span>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-base font-black bg-gradient-to-r from-orange-400 to-amber-300 bg-clip-text text-transparent">
+            出門生活圈助手
+          </h1>
+          <span id="poolBadge" class="text-[10px] bg-orange-950 text-orange-400 border border-orange-700/60 px-2 py-0.5 rounded-full font-bold">
+            符合 18 處
+          </span>
         </div>
-        <div>
-          <h1 class="font-extrabold text-lg tracking-wide text-white leading-tight">今天吃什麼？</h1>
-          <p class="text-[11px] text-slate-400">外帶推薦 ✕ 轉盤決定</p>
+        <div class="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+          <span id="centerLocText">正在偵測中心點位置...</span>
         </div>
       </div>
-      <button id="btn-re-locate" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-xs text-orange-400 border border-slate-700 active:scale-95 transition-all">
-        <i class="ph-bold ph-crosshair text-sm" id="locate-icon"></i>
-        <span id="loc-btn-text">重新定位</span>
-      </button>
     </div>
-
-    <!-- Geolocation Status Banner -->
-    <div id="location-bar" class="mt-2.5 px-3 py-1.5 bg-slate-900/90 rounded-lg flex items-center justify-between text-xs text-slate-300 border border-slate-800">
-      <div class="flex items-center space-x-1.5 overflow-hidden">
-        <i class="ph-fill ph-map-pin text-orange-400 shrink-0"></i>
-        <span id="location-address" class="truncate font-medium">取得定位中...</span>
+    
+    <div class="flex items-center gap-2">
+      <!-- 交通模式切換 -->
+      <div class="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+        <button id="btnMoto" onclick="setMode('moto')" class="px-2.5 py-1 font-bold rounded-lg bg-orange-600 text-white transition">
+          🛵 騎車模式
+        </button>
+        <button id="btnCar" onclick="setMode('car')" class="px-2.5 py-1 font-bold rounded-lg text-slate-400 hover:text-slate-200 transition">
+          🚗 開車模式
+        </button>
       </div>
-      <span id="filter-summary-badge" class="shrink-0 text-[10px] bg-orange-500/20 text-orange-300 px-2 py-0.5 rounded font-mono font-semibold">3km / 營業中</span>
+
+      <!-- 重回我目前 GPS 所在地 -->
+      <button onclick="resetToMyLocation()" class="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs flex items-center gap-1 text-slate-200 shadow" title="回到我目前的位置">
+        <span>📍</span> <span class="hidden sm:inline">我的位置</span>
+      </button>
     </div>
   </header>
 
-  <main class="w-full max-w-md px-4 mt-3 space-y-4">
+  <!-- 主畫面區域 -->
+  <main class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
     
-    <!-- Step 1: Category Chips -->
-    <section>
-      <div class="flex items-center justify-between mb-2">
-        <label class="text-xs font-bold text-slate-400 flex items-center space-x-1">
-          <i class="ph-bold ph-funnel text-orange-400"></i>
-          <span>第一步：料理粗選分類</span>
-        </label>
-        <span id="item-count-text" class="text-[11px] text-orange-400 font-semibold">符合 0 家</span>
-      </div>
-      <div class="flex space-x-2 overflow-x-auto pb-1 no-scrollbar" id="category-container">
-        <!-- Injected via JavaScript -->
-      </div>
-    </section>
-
-    <!-- Step 2: Distance Range & Open Toggle -->
-    <section class="glass-card p-3.5 rounded-2xl flex items-center justify-between gap-3">
-      <div class="flex-1">
-        <div class="flex justify-between items-center mb-1">
-          <span class="text-xs font-semibold text-slate-300 flex items-center gap-1">
-            <i class="ph ph-compass text-orange-400"></i> 搜尋半徑
-          </span>
-          <span id="radius-val" class="text-xs font-bold text-orange-400">3.0 km</span>
-        </div>
-        <input id="radius-slider" type="range" min="0.5" max="5.0" step="0.5" value="3.0" 
-               class="w-full accent-orange-500 h-1.5 bg-slate-700 rounded-lg cursor-pointer">
-      </div>
-
-      <div class="h-8 w-[1px] bg-slate-700"></div>
-
-      <button id="toggle-open-only" class="flex flex-col items-center justify-center px-3 py-1.5 rounded-xl bg-orange-500/10 border border-orange-500/30 text-orange-400 hover:bg-orange-500/20 transition-all">
-        <i class="ph-bold ph-storefront text-base"></i>
-        <span class="text-[10px] font-bold mt-0.5">只看營業中</span>
-      </button>
-    </section>
-
-    <section class="relative flex flex-col items-center justify-center pt-2">
-      <!-- Roulette Container -->
-      <div class="relative w-[300px] h-[300px] sm:w-[320px] sm:h-[320px] flex items-center justify-center">
-        <!-- Top Pointer Triangle -->
-        <div class="wheel-pointer"></div>
-        
-        <!-- Canvas Wheel -->
-        <canvas id="roulette-canvas" width="640" height="640" class="w-full h-full rounded-full shadow-2xl shadow-orange-950/30"></canvas>
-        
-        <!-- Center Action Button -->
-        <button id="btn-spin" class="absolute w-20 h-20 rounded-full bg-gradient-to-tr from-orange-600 via-orange-500 to-amber-400 text-white font-extrabold text-lg shadow-xl shadow-orange-600/50 flex flex-col items-center justify-center active:scale-90 transition-transform duration-100 z-10 border-4 border-slate-900 focus:outline-none">
-          <i class="ph-fill ph-play text-xl mb-0.5 ml-0.5"></i>
-          <span class="text-xs tracking-tighter">抽轉盤</span>
-        </button>
-      </div>
-
-      <!-- Quick Action / Re-shuffle buttons -->
-      <div class="mt-4 flex items-center space-x-3">
-        <button id="btn-quick-spin" class="px-5 py-2.5 rounded-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold text-sm shadow-lg shadow-orange-500/25 active:scale-95 transition-all flex items-center space-x-1.5">
-          <i class="ph-bold ph-dice-five text-base"></i>
-          <span>幫我決定！開始旋轉</span>
-        </button>
-      </div>
-    </section>
-
-    <section class="mt-4">
-      <div class="flex items-center justify-between mb-2">
-        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-          <i class="ph ph-list-dashes text-orange-400"></i>
-          <span>候選外帶名單 (<span id="candidate-count">0</span>)</span>
-        </h3>
-        <span class="text-[11px] text-slate-500">轉盤直接隨機抽取</span>
-      </div>
-      <div id="store-list" class="space-y-2 max-h-48 overflow-y-auto pr-1">
-        <!-- Injected via JavaScript -->
-      </div>
-    </section>
-  </main>
-
-  <div id="result-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md hidden opacity-0 transition-opacity duration-300">
-    <div id="modal-card" class="bg-slate-900 border border-slate-700/80 rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl transform scale-95 transition-all duration-300">
+    <!-- 左側控制與名單卡片面板 -->
+    <div class="w-full md:w-96 bg-slate-900/95 border-r border-slate-800 p-3.5 flex flex-col gap-3 overflow-y-auto shrink-0 z-10 shadow-2xl">
       
-      <!-- Modal Header Banner -->
-      <div class="relative bg-gradient-to-br from-orange-500 to-amber-600 p-5 text-white">
-        <button id="modal-close-btn" class="absolute top-4 right-4 w-8 h-8 rounded-full bg-black/20 hover:bg-black/40 flex items-center justify-center text-white transition-colors">
-          <i class="ph-bold ph-x text-base"></i>
-        </button>
-        <span class="inline-block px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[11px] font-semibold mb-1 backdrop-blur-sm">
-          🎉 命定美食出爐！
-        </span>
-        <h2 id="res-name" class="text-2xl font-black leading-tight drop-shadow-sm">梁社漢排骨</h2>
-        <div class="flex items-center space-x-3 text-xs mt-2 text-orange-100">
-          <span class="flex items-center space-x-1 font-bold">
-            <i class="ph-fill ph-star text-amber-300"></i>
-            <span id="res-rating">4.7</span>
-          </span>
-          <span>•</span>
-          <span id="res-distance" class="font-medium">距離 850 公尺</span>
-          <span>•</span>
-          <span id="res-type" class="font-medium">便當/飯食</span>
+      <!-- 預估車程滑桿（擴展至 40 分鐘） -->
+      <div class="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
+        <div class="flex justify-between items-center mb-1">
+          <label class="text-xs font-bold text-slate-300 flex items-center gap-1">
+            ⏱️ 目標車程半徑：<span id="timeVal" class="text-orange-400 font-bold text-sm">8 分鐘</span>
+          </label>
+          <span id="distVal" class="text-[11px] text-slate-400 font-mono">約 4.0 km</span>
+        </div>
+        <input id="timeSlider" type="range" min="2" max="40" value="8" step="1"
+          class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-orange-500" 
+          oninput="onRadiusSliderChange(this.value)" />
+        <div class="flex justify-between text-[10px] text-slate-500 mt-1 font-mono">
+          <span>2分</span>
+          <span>15分</span>
+          <span>30分</span>
+          <span>40分鐘</span>
         </div>
       </div>
 
-      <!-- Modal Body: Address & Menu -->
-      <div class="p-5 space-y-4">
-        <!-- Address & Takeout tag -->
-        <div class="flex items-start justify-between text-xs text-slate-300 bg-slate-800/80 p-3 rounded-xl border border-slate-700">
-          <div class="flex items-start space-x-2 mr-2">
-            <i class="ph-bold ph-map-pin text-orange-400 text-sm mt-0.5 shrink-0"></i>
-            <span id="res-address" class="leading-relaxed">台中市沙鹿區中山路123號</span>
-          </div>
-          <a id="res-maps-link" href="#" target="_blank" class="shrink-0 px-2.5 py-1.5 rounded-lg bg-orange-500/20 text-orange-400 font-bold hover:bg-orange-500 hover:text-white transition-colors flex items-center space-x-1">
-            <i class="ph-bold ph-navigation-arrow"></i>
-            <span>導航</span>
-          </a>
+      <!-- 全方位生活機能與出門分類 -->
+      <div>
+        <label class="text-xs font-bold text-slate-400 block mb-1.5">🏷️ 想找甚麼？（點擊切換類別）</label>
+        <div class="grid grid-cols-4 gap-1.5" id="catGrid">
+          <button onclick="changeCategory('FOOD_FAST', this)" class="cat-pill active py-2 px-1 bg-orange-600 text-[11px] font-bold rounded-xl border border-orange-500 text-center transition">🍟 速食連鎖</button>
+          <button onclick="changeCategory('FOOD_MEAL', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🍱 便當麵餃</button>
+          <button onclick="changeCategory('FOOD_STEAK', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🥩 排餐鍋物</button>
+          <button onclick="changeCategory('FOOD_VEGE', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🥦 素食炸物</button>
+          
+          <button onclick="changeCategory('DRINK', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🧋 飲料甜品</button>
+          <button onclick="changeCategory('PARKING', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🅿️ 停車場(費率)</button>
+          <button onclick="changeCategory('MART', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🛒 大賣場/超市</button>
+          <button onclick="changeCategory('GATHER', this)" class="cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition">🍻 坐坐聚餐</button>
         </div>
+      </div>
 
-        <!-- Menu / Price Table -->
-        <div>
-          <div class="flex items-center justify-between mb-2">
-            <h4 class="text-xs font-bold text-slate-400 flex items-center space-x-1">
-              <i class="ph-bold ph-receipt text-orange-400"></i>
-              <span>外帶熱門菜單 & 價目表 (NT$)</span>
-            </h4>
-            <span class="text-[10px] text-emerald-400 font-semibold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
-              <i class="ph-bold ph-clock text-[10px]"></i> 現正營業中
-            </span>
-          </div>
-          <div id="menu-items-container" class="space-y-2 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80 max-h-44 overflow-y-auto">
-            <!-- Menu items generated dynamically -->
-          </div>
+      <!-- 候選結果統計與清單 -->
+      <div class="flex-1 flex flex-col min-h-0 border-t border-slate-800/80 pt-2">
+        <div class="flex justify-between items-center mb-1 text-[11px] text-slate-400">
+          <span id="listTitleHint">目前中心周邊設施（點選查看價目）</span>
+          <span id="filteredSummary" class="text-orange-400 font-mono font-bold">0 間</span>
         </div>
-
-        <!-- Action Buttons -->
-        <div class="pt-1 flex gap-2">
-          <button id="modal-spin-again" class="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center space-x-1 active:scale-95 transition-all">
-            <i class="ph-bold ph-arrow-counter-clockwise"></i>
-            <span>重轉一次</span>
-          </button>
-          <button id="modal-confirm" class="flex-1 py-3 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold text-xs flex items-center justify-center space-x-1 shadow-lg shadow-orange-500/25 active:scale-95 transition-all">
-            <i class="ph-bold ph-check-circle"></i>
-            <span>就吃這家！</span>
-          </button>
+        <div id="storeList" class="flex-1 overflow-y-auto space-y-2 pr-1">
+          <!-- 項目動態產生 -->
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- Audio Synthesizer (Tone.js via Web Audio API fallback for ticks) -->
+    <!-- 右側：真正的互動地圖與標點規劃 -->
+    <div class="flex-1 h-full relative">
+      <div id="map"></div>
+
+      <!-- 地圖互動提示小浮窗 -->
+      <div class="absolute top-3 right-3 bg-slate-900/90 backdrop-blur-md px-3 py-2 rounded-xl border border-slate-800 text-[11px] text-slate-200 shadow-xl z-[1000] pointer-events-none flex items-center gap-2">
+        <span class="text-orange-400 text-base">📌</span>
+        <span>在地圖上<b>任意點擊</b>，可切換中心點規劃該處周邊吃喝與停車</span>
+      </div>
+
+      <!-- 詳細資訊底部抽屜彈窗（點擊卡片或地圖圖釘時彈出） -->
+      <div id="detailDrawer" class="absolute bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 bg-slate-900/95 border-2 border-orange-500 rounded-3xl p-4 shadow-2xl z-[1000] hidden backdrop-blur-md">
+        <div class="flex justify-between items-start mb-2">
+          <div>
+            <span id="drawerCatBadge" class="text-[10px] bg-orange-950 text-orange-400 border border-orange-700/60 px-2 py-0.5 rounded-full font-bold">
+              --
+            </span>
+            <h3 id="drawerTitle" class="text-lg font-black text-white mt-1 leading-snug">--</h3>
+            <p id="drawerAddr" class="text-xs text-slate-400 truncate">--</p>
+          </div>
+          <button onclick="closeDrawer()" class="text-slate-400 hover:text-white p-1 text-base">✕</button>
+        </div>
+
+        <!-- 價目表 / 停車計費資訊主區塊 -->
+        <div class="bg-slate-950 p-2.5 rounded-2xl border border-slate-800 mb-3 text-xs">
+          <div class="flex justify-between items-center pb-1.5 mb-1.5 border-b border-slate-800 text-slate-400">
+            <span>費用參考／預估均消</span>
+            <span id="drawerRate" class="text-orange-400 font-bold font-mono text-xs">--</span>
+          </div>
+          <div class="text-[11px] text-slate-400 font-medium mb-1" id="drawerDetailLabel">🔥 招牌品項 / 計費規則：</div>
+          <div id="drawerItemsBox" class="space-y-1">
+            <!-- 價目動態填入 -->
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-xs text-slate-400">
+            <span id="drawerDistance">🛵 車程約 -- 分鐘</span>
+          </div>
+          <a id="drawerNavBtn" href="#" target="_blank" class="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs rounded-xl flex items-center gap-1 shadow-lg shadow-orange-500/30 transition">
+            <span>🚀</span> 導航前往 (Google Maps)
+          </a>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
   <script>
-    // Audio Context for Wheel Ticking and Win sounds
-    let audioCtx = null;
-    function initAudio() {
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // 預設中心點座標（台中沙鹿生活圈中心）
+    let centerCoords = { lat: 24.2335, lng: 120.5658 };
+    let myRealGps = { lat: 24.2335, lng: 120.5658 };
+    let currentMode = 'moto'; // 'moto' | 'car'
+    let currentCat = 'FOOD_FAST';
+    let currentRadiusKm = 4.0; // 預設 8 分鐘 (機車 4km)
+
+    let map = null;
+    let circleLayer = null;
+    let centerMarker = null;
+    let storeMarkersGroup = null;
+
+    // 海線/中港生活圈全方位豐富資料庫（美食、手搖、賣場超市、收費停車場）
+    const LIFE_DATABASE = [
+      // 🍟 速食連鎖
+      { id: "f1", name: "麥當勞-沙鹿沙田餐廳", cat: "FOOD_FAST", lat: 24.2341, lng: 120.5662, rating: 4.1, avg: "$140~$220", addr: "沙鹿區沙田路 107 號",
+        items: [{ n: "大麥克經典套餐", p: "$140" }, { n: "麥克鷄塊(10塊)套餐", p: "$169" }, { n: "雙層牛肉吉事堡套餐", p: "$130" }] },
+      { id: "f2", name: "肯德基 台中沙鹿餐廳", cat: "FOOD_FAST", lat: 24.2348, lng: 120.5667, rating: 3.9, avg: "$150~$250", addr: "沙鹿區沙田路 127 號",
+        items: [{ n: "咔啦脆雞(2塊)經典餐", p: "$175" }, { n: "原味蛋撻禮盒(6入)", p: "$240" }, { n: "青花椒香麻脆雞餐", p: "$185" }] },
+      { id: "f3", name: "摩斯漢堡 台中沙鹿店", cat: "FOOD_FAST", lat: 24.2338, lng: 120.5659, rating: 4.2, avg: "$130~$210", addr: "沙鹿區沙田路 101 號",
+        items: [{ n: "摩斯鱈魚堡套餐", p: "$135" }, { n: "海洋珍珠堡套餐", p: "$165" }, { n: "大杯冰紅茶", p: "$40" }] },
+      { id: "f4", name: "漢堡王 台中沙鹿店", cat: "FOOD_FAST", lat: 24.2392, lng: 120.5688, rating: 4.3, avg: "$140~$230", addr: "沙鹿區成功東街 86 號",
+        items: [{ n: "華堡雙層牛肉套餐", p: "$214" }, { n: "安格斯厚切牛肉堡", p: "$145" }, { n: "洋蔥圈(大份)", p: "$55" }] },
+      { id: "f5", name: "麥當勞-沙鹿中棲餐廳(附設得來速)", cat: "FOOD_FAST", lat: 24.2388, lng: 120.5792, rating: 4.0, avg: "$140~$220", addr: "沙鹿區台灣大道七段 333 號",
+        items: [{ n: "得來速免下車點餐取餐", p: "快取" }, { n: "勁辣鷄腿堡套餐", p: "$140" }, { n: "OREO冰炫風", p: "$59" }] },
+      { id: "f6", name: "胖老爹美式炸雞 沙鹿店", cat: "FOOD_FAST", lat: 24.2365, lng: 120.5655, rating: 4.1, avg: "$120~$200", addr: "沙鹿區中山路 321 號",
+        items: [{ n: "4號餐(雞腿+雞塊+翅)", p: "$150" }, { n: "全家炸雞特惠桶(8塊)", p: "$369" }] },
+
+      // 🍱 便當炒飯與麵餃
+      { id: "m1", name: "正忠排骨飯 沙鹿店", cat: "FOOD_MEAL", lat: 24.2325, lng: 120.5651, rating: 4.1, avg: "$100~$135", addr: "沙鹿區沙田路 85 號",
+        items: [{ n: "正忠招牌排骨飯便當", p: "$110" }, { n: "香雞腿飯便當", p: "$125" }, { n: "宮保雞丁飯便當", p: "$105" }] },
+      { id: "m2", name: "段純貞牛肉麵 台中沙鹿店", cat: "FOOD_MEAL", lat: 24.2378, lng: 120.5701, rating: 4.3, avg: "$180~$260", addr: "沙鹿區光華路 302 號",
+        items: [{ n: "經典紅燒腱心牛肉麵", p: "$205" }, { n: "老火原汁牛肉麵", p: "$195" }, { n: "紅油抄手(8顆)", p: "$95" }] },
+      { id: "m3", name: "八方雲集 沙鹿沙田店", cat: "FOOD_MEAL", lat: 24.2345, lng: 120.5660, rating: 4.0, avg: "$80~$140", addr: "沙鹿區沙田路 118 號",
+        items: [{ n: "招牌/韭菜鍋貼(10顆)", p: "$70" }, { n: "鮮蝦水餃(8顆)", p: "$80" }, { n: "酸辣湯/蕈菇湯", p: "$35" }] },
+      { id: "m4", name: "沙鹿肉圓福（在地70年老舖）", cat: "FOOD_MEAL", lat: 24.2360, lng: 120.5630, rating: 4.3, avg: "$60~$110", addr: "沙鹿區鎮江街 60 號",
+        items: [{ n: "低溫油泡手工肉圓", p: "$45" }, { n: "油豆腐肉湯", p: "$35" }, { n: "乾麵佐甜辣紅醬", p: "$40" }] },
+      { id: "m5", name: "悟饕池上飯包 沙鹿興安店", cat: "FOOD_MEAL", lat: 24.2355, lng: 120.5670, rating: 4.2, avg: "$95~$125", addr: "沙鹿區興安路 48 號",
+        items: [{ n: "正宗池上木盒飯包", p: "$105" }, { n: "黃金酥炸雞腿飯包", p: "$120" }] },
+
+      // 🥩 排餐鐵板與鍋物
+      { id: "s1", name: "成功牛排 沙鹿店", cat: "FOOD_STEAK", lat: 24.2389, lng: 120.5678, rating: 4.2, avg: "$180~$280", addr: "沙鹿區成功東街 25 號",
+        items: [{ n: "特選嫩肩牛排(附鐵板麵蛋)", p: "$180" }, { n: "嫩肩厚切牛排", p: "$260" }, { n: "自助濃湯爆米花無限", p: "$0" }] },
+      { id: "s2", name: "孫東寶台式牛排 沙鹿店", cat: "FOOD_STEAK", lat: 24.2361, lng: 120.5645, rating: 4.0, avg: "$190~$310", addr: "沙鹿區中山路 315 號",
+        items: [{ n: "主廚牛排(蘑菇/黑胡椒)", p: "$190" }, { n: "超大塊板腱牛排", p: "$290" }, { n: "爆漿餐包", p: "$15" }] },
+      { id: "s3", name: "六扇門時尚湯鍋 沙鹿光華店", cat: "FOOD_STEAK", lat: 24.2372, lng: 120.5695, rating: 4.3, avg: "$160~$220", addr: "沙鹿區光華路 280 號",
+        items: [{ n: "經典原味小火鍋", p: "$160" }, { n: "香濃起司牛奶鍋", p: "$200" }, { n: "豬油拌飯冷飲自助吧", p: "$0" }] },
+      { id: "s4", name: "肉多多火鍋 台中沙鹿店", cat: "FOOD_STEAK", lat: 24.2410, lng: 120.5621, rating: 4.7, avg: "$350~$550", addr: "沙鹿區中山路 497 號",
+        items: [{ n: "石頭爆炒鍋+梅花豬", p: "$349" }, { n: "海陸雙絕大肉盤", p: "$599" }, { n: "蔬食吧吃到飽", p: "$0" }] },
+      { id: "s5", name: "大埔鐵板燒 沙鹿店", cat: "FOOD_STEAK", lat: 24.2351, lng: 120.5653, rating: 4.1, avg: "$160~$250", addr: "沙鹿區中山路 290 號",
+        items: [{ n: "黑胡椒牛肉片套餐", p: "$170" }, { n: "松阪豬肉套餐", p: "$220" }, { n: "高麗菜/豆芽無限續加", p: "$0" }] },
+
+      // 🥦 素食炸物蔬食
+      { id: "v1", name: "盛記香豆富（全素臭豆腐專賣）", cat: "FOOD_VEGE", lat: 24.2312, lng: 120.5641, rating: 4.6, avg: "$80~$150", addr: "沙鹿區鎮南路二段 617 號",
+        items: [{ n: "現炸脆皮香豆腐(大份)", p: "$70" }, { n: "秘醬酥炸香豆包", p: "$65" }, { n: "酥炸全素皮蛋", p: "$40" }] },
+      { id: "v2", name: "杜記素食鹹酥雞", cat: "FOOD_VEGE", lat: 24.2385, lng: 120.5679, rating: 4.5, avg: "$90~$160", addr: "沙鹿區成功東街商圈",
+        items: [{ n: "素鹽酥G塊(九層塔香)", p: "$60" }, { n: "現炸杏鮑菇", p: "$50" }, { n: "甘梅地瓜條", p: "$45" }] },
+      { id: "v3", name: "這都有炸物（綜合埔里小農炸菇）", cat: "FOOD_VEGE", lat: 24.2275, lng: 120.5765, rating: 4.4, avg: "$100~$180", addr: "沙鹿區北勢東路 588 號",
+        items: [{ n: "綜合炸菇大盛盤(5種菇)", p: "$120" }, { n: "酥炸厚豆包", p: "$35" }, { n: "特調椒鹽四季豆", p: "$40" }] },
+
+      // 🧋 飲料甜品
+      { id: "d1", name: "五桐號 WooTea 沙鹿靜宜店", cat: "DRINK", lat: 24.2278, lng: 120.5750, rating: 4.4, avg: "$45~$80", addr: "沙鹿區北勢東路 537 號",
+        items: [{ n: "招牌五桐茶佐杏仁凍", p: "$50" }, { n: "最完美手沖泰奶", p: "$65" }, { n: "荔枝冰茶凍飲", p: "$60" }] },
+      { id: "d2", name: "得正#台中沙鹿計畫", cat: "DRINK", lat: 24.2350, lng: 120.5648, rating: 4.5, avg: "$40~$75", addr: "沙鹿區中山路 248 號",
+        items: [{ n: "檸檬春烏龍", p: "$55" }, { n: "芝士奶蓋焙烏龍", p: "$60" }, { n: "烘吉茶奶凍拿鐵", p: "$70" }] },
+      { id: "d3", name: "麻古茶坊 沙鹿沙田店", cat: "DRINK", lat: 24.2349, lng: 120.5668, rating: 4.3, avg: "$45~$95", addr: "沙鹿區沙田路 133 號",
+        items: [{ n: "柳橙果粒茶(大杯)", p: "$75" }, { n: "楊枝甘露系列", p: "$90" }, { n: "金萱雙Q", p: "$45" }] },
+      { id: "d4", name: "清原芋圓 沙鹿北勢店", cat: "DRINK", lat: 24.2285, lng: 120.5745, rating: 4.3, avg: "$50~$90", addr: "沙鹿區北勢東路 512 號",
+        items: [{ n: "芋見幸福招牌芋泥冰", p: "$80" }, { n: "雙芋奶茶佐珍珠", p: "$65" }, { n: "暖心燒仙草", p: "$55" }] },
+
+      // 🅿️ 收費停車場（包含實體收費費率與規則）
+      { id: "p1", name: "沙鹿公有立體停車場", cat: "PARKING", lat: 24.2342, lng: 120.5645, rating: 4.0, avg: "小型車 $20/小時", addr: "沙鹿區大同街 115 號",
+        items: [{ n: "小型車計時收費", p: "$20 / 時" }, { n: "夜間優惠時段(22-08)", p: "$10 / 時" }, { n: "當日最高收費上限", p: "$150 / 日" }, { n: "室內立體平面車位", p: "有遮雨" }] },
+      { id: "p2", name: "光華路平面收費停車場", cat: "PARKING", lat: 24.2381, lng: 120.5691, rating: 4.1, avg: "小型車 $30/小時", addr: "沙鹿區光華路與成功東街口",
+        items: [{ n: "平日收費標準", p: "$30 / 時" }, { n: "假日收費標準", p: "$40 / 時" }, { n: "全日無最高上限", p: "累計計費" }, { n: "戶外車位/車牌自動辨識", p: "悠遊卡/LINE Pay" }] },
+      { id: "p3", name: "沙鹿車站西站停車場", cat: "PARKING", lat: 24.2369, lng: 120.5605, rating: 4.2, avg: "小型車 $20/時 ｜ 機車 $20/次", addr: "沙鹿區青年路(沙鹿車站西出口)",
+        items: [{ n: "汽車臨停計時", p: "$20 / 時" }, { n: "汽車單日最高上限", p: "$100 / 日" }, { n: "機車計次收費", p: "$20 / 次(跨日另計)" }, { n: "火車通勤停放推薦", p: "位子多" }] },
+      { id: "p4", name: "中港童綜合醫院訪客停車場", cat: "PARKING", lat: 24.2490, lng: 120.5480, rating: 4.0, avg: "小型車 $30/小時", addr: "梧棲區臺灣大道八段 699 號",
+        items: [{ n: "汽車第1小時起算", p: "$30 / 時" }, { n: "就診蓋章折抵優惠", p: "折抵 1~2 小時" }, { n: "室內地下停車場", p: "防曬防雨" }] },
+
+      // 🛒 大賣場／全聯／大型超市
+      { id: "m_costco", name: "Costco 好市多 台中店 (開車規劃)", cat: "MART", lat: 24.1332, lng: 120.6480, rating: 4.5, avg: "量販批發/會員制", addr: "南屯區文心南三路 288 號",
+        items: [{ n: "烤全雞/美式大披薩", p: "$189 / $300" }, { n: "特選無骨牛小排燒烤片", p: "秤重計價" }, { n: "地下大型停車場", p: "消費折抵" }] },
+      { id: "m_carrefour", name: "家樂福 沙鹿店 (大型量販店)", cat: "MART", lat: 24.2375, lng: 120.5710, rating: 4.2, avg: "賣場/家樂福超市/美食街", addr: "沙鹿區光華路 336 號",
+        items: [{ n: "量販生鮮日用品一站購足", p: "常態特價" }, { n: "附設美食街(爭鮮/三商巧福)", p: "內用冷氣" }, { n: "大型專用汽車停車場", p: "消費滿額免費停車" }] },
+      { id: "m_px1", name: "全聯福利中心 沙鹿沙田店", cat: "MART", lat: 24.2315, lng: 120.5658, rating: 4.1, avg: "生鮮超市/乾貨", addr: "沙鹿區沙田路 66 號",
+        items: [{ n: "生鮮蔬果/特選冷藏肉品", p: "每日特價" }, { n: "現烤麵包與現煮熱咖啡", p: "$25~$35" }, { n: "門口機車停放格", p: "免費" }] },
+
+      // 🍻 坐坐聚餐（冷氣、大空間、適合長聊）
+      { id: "g1", name: "異人館咖啡部屋 沙鹿店", cat: "GATHER", lat: 24.2405, lng: 120.5635, rating: 4.1, avg: "$360~$520", addr: "沙鹿區中山路 478 號",
+        items: [{ n: "川味水煮牛煲套餐(附飲品甜點)", p: "$390" }, { n: "酸白菜海鮮鍋套餐", p: "$410" }, { n: "炸物綜合拼盤", p: "$260" }, { n: "附設專屬汽車停車格", p: "免費" }] },
+      { id: "g2", name: "老井極上燒肉 福科店 (開車聚餐首選)", cat: "GATHER", lat: 24.1882, lng: 120.6120, rating: 4.8, avg: "$900~$1800", addr: "西屯區福科路 567 號",
+        items: [{ n: "極上安格斯牛雙人套餐", p: "$1990" }, { n: "特選豚肉海鮮雙人套餐", p: "$2190" }, { n: "手捲干貝/無限主廚雞湯", p: "$0" }, { n: "周邊特約收費停車場", p: "可折抵" }] },
+      { id: "g3", name: "屋馬燒肉 國安店 (米平方商場)", cat: "GATHER", lat: 24.1950, lng: 120.6125, rating: 4.8, avg: "$900~$1700", addr: "西屯區國安一路 168 號 B1",
+        items: [{ n: "經典霜降牛雙人套餐", p: "$2080" }, { n: "極品全牛特選雙人盛合", p: "$2380" }, { n: "招牌海鮮粥", p: "推薦換購" }, { n: "米平方商場地下停車場", p: "消費折抵" }] }
+    ];
+
+    let currentStores = [];
+
+    // 初始化地圖與定位
+    window.onload = () => {
+      initLeafletMap();
+      initGeoLocation();
+    };
+
+    function initLeafletMap() {
+      // 採用 CartoDB Dark 高對比暗色圖資（乾淨、速度極快、免 API Key）
+      map = L.map('map', {
+        center: [centerCoords.lat, centerCoords.lng],
+        zoom: 14,
+        zoomControl: true
+      });
+
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19
+      }).addTo(map);
+
+      storeMarkersGroup = L.layerGroup().addTo(map);
+
+      // 中心目標圖釘（可點擊移動）
+      const centerIcon = L.divIcon({
+        className: 'custom-center-pin',
+        html: `<div class="flex items-center justify-center w-8 h-8 bg-orange-500 text-white rounded-full border-2 border-white shadow-xl animate-bounce">📍</div>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 32]
+      });
+
+      centerMarker = L.marker([centerCoords.lat, centerCoords.lng], { icon: centerIcon }).addTo(map);
+
+      // 半徑圈
+      circleLayer = L.circle([centerCoords.lat, centerCoords.lng], {
+        radius: currentRadiusKm * 1000,
+        color: '#f97316',
+        fillColor: '#ea580c',
+        fillOpacity: 0.1,
+        weight: 2,
+        dashArray: '5, 8'
+      }).addTo(map);
+
+      // ⭐ 核心功能：在地圖上任意點擊標點，立即規劃那裡的周邊！
+      map.on('click', (e) => {
+        setNewCenter(e.latlng.lat, e.latlng.lng, "自訂規劃標點");
+      });
+    }
+
+    function initGeoLocation() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          pos => {
+            myRealGps = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            setNewCenter(myRealGps.lat, myRealGps.lng, "我的真實位置");
+          },
+          err => {
+            setNewCenter(centerCoords.lat, centerCoords.lng, "沙鹿市區中心 (預設)");
+          },
+          { enableHighAccuracy: true, timeout: 5000 }
+        );
+      } else {
+        setNewCenter(centerCoords.lat, centerCoords.lng, "沙鹿市區中心 (預設)");
       }
     }
 
-    function playTickSound() {
-      try {
-        if (!audioCtx) return;
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(600, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(200, audioCtx.currentTime + 0.03);
-        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.03);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.03);
-      } catch (e) {}
+    function resetToMyLocation() {
+      setNewCenter(myRealGps.lat, myRealGps.lng, "我的真實位置");
+      map.flyTo([myRealGps.lat, myRealGps.lng], 14);
     }
 
-    function playWinSound() {
-      try {
-        if (!audioCtx) return;
-        const now = audioCtx.currentTime;
-        const freqs = [440, 554, 659, 880];
-        freqs.forEach((freq, idx) => {
-          const osc = audioCtx.createOscillator();
-          const gain = audioCtx.createGain();
-          osc.type = 'triangle';
-          osc.frequency.setValueAtTime(freq, now + idx * 0.08);
-          gain.gain.setValueAtTime(0.12, now + idx * 0.08);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.35);
-          osc.connect(gain);
-          gain.connect(audioCtx.destination);
-          osc.start(now + idx * 0.08);
-          osc.stop(now + idx * 0.08 + 0.35);
-        });
-      } catch (e) {}
+    // 變更規劃中心點（自己目前位置 OR 地圖點擊自選位置）
+    function setNewCenter(lat, lng, desc = "") {
+      centerCoords = { lat, lng };
+      centerMarker.setLatLng([lat, lng]);
+      circleLayer.setLatLng([lat, lng]);
+      document.getElementById('centerLocText').innerText = `📍 中心點：${desc} (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+      refreshData();
     }
 
-    // Default Fallback Coordinates (Taiwan)
-    const DEFAULT_COORDS = { lat: 24.2335, lng: 120.5658, address: "台中市沙鹿區 (預設位置)" };
-    let userLocation = { ...DEFAULT_COORDS };
-
-    // Categories
-    const CATEGORIES = [
-      { id: 'all', name: '全部料理', icon: 'ph-squares-four' },
-      { id: 'rice', name: '便當/飯食', icon: 'ph-bowl-food' },
-      { id: 'noodle', name: '麵食/水餃', icon: 'ph-cooking-pot' },
-      { id: 'fastfood', name: '速食/炸物', icon: 'ph-hamburger' },
-      { id: 'hotpot', name: '鍋物/湯品', icon: 'ph-fire' },
-      { id: 'light', name: '輕食/早餐', icon: 'ph-coffee' }
-    ];
-
-    // Rich takeout database with real menu items & prices (NTD)
-    const RESTAURANT_DB = [
-      {
-        id: 1,
-        name: "正忠排骨飯",
-        category: "rice",
-        latOffset: 0.007,
-        lngOffset: 0.005,
-        rating: 4.5,
-        openNow: true,
-        address: "中山路238號",
-        menu: [
-          { name: "正忠排骨飯", price: 105, tag: "招牌必點" },
-          { name: "香雞排飯", price: 105, tag: "人氣" },
-          { name: "鮮魚飯", price: 110, tag: "" },
-          { name: "燒雞腿飯", price: 125, tag: "熱銷" }
-        ]
-      },
-      {
-        id: 2,
-        name: "梁社漢排骨",
-        category: "rice",
-        latOffset: -0.005,
-        lngOffset: 0.006,
-        rating: 4.6,
-        openNow: true,
-        address: "成功東街45號",
-        menu: [
-          { name: "炸排骨便當", price: 115, tag: "米其林推薦" },
-          { name: "滷雞腿便當", price: 125, tag: "爆汁推薦" },
-          { name: "椒麻雞便當", price: 130, tag: "酸辣夠味" },
-          { name: "蜂蜜香檸茶", price: 40, tag: "解膩" }
-        ]
-      },
-      {
-        id: 3,
-        name: "八方雲集鍋貼水餃",
-        category: "noodle",
-        latOffset: 0.003,
-        lngOffset: -0.004,
-        rating: 4.3,
-        openNow: true,
-        address: "大同街88號",
-        menu: [
-          { name: "招牌鍋貼 (10顆)", price: 70, tag: "經典必吃" },
-          { name: "韓式辣味水餃 (10顆)", price: 75, tag: "微辣" },
-          { name: "古早味乾麵", price: 50, tag: "" },
-          { name: "酸辣湯", price: 35, tag: "搭餐超讚" }
-        ]
-      },
-      {
-        id: 4,
-        name: "段純貞牛肉麵",
-        category: "noodle",
-        latOffset: 0.012,
-        lngOffset: 0.011,
-        rating: 4.7,
-        openNow: true,
-        address: "光華路102號",
-        menu: [
-          { name: "經典紅燒牛肉麵", price: 185, tag: "濃郁湯頭" },
-          { name: "半筋半肉麻辣麵", price: 215, tag: "鎮店之寶" },
-          { name: "重慶小麵", price: 95, tag: "椒麻香" },
-          { name: "滷水花生切盤", price: 55, tag: "開胃" }
-        ]
-      },
-      {
-        id: 5,
-        name: "麥當勞 McDonald's",
-        category: "fastfood",
-        latOffset: 0.014,
-        lngOffset: -0.008,
-        rating: 4.4,
-        openNow: true,
-        address: "沙田路89號",
-        menu: [
-          { name: "大麥克經典套餐", price: 140, tag: "萬年經典" },
-          { name: "麥脆鷄腿 (辣味/原味)", price: 130, tag: "多汁酥脆" },
-          { name: "麥克鷄塊 (6塊套餐)", price: 119, tag: "糖醋醬必備" },
-          { name: "金黃地瓜條", price: 65, tag: "甜香" }
-        ]
-      },
-      {
-        id: 6,
-        name: "胖老爹美式炸雞",
-        category: "fastfood",
-        latOffset: -0.009,
-        lngOffset: -0.003,
-        rating: 4.5,
-        openNow: true,
-        address: "鎮南路二段302號",
-        menu: [
-          { name: "全家餐炸雞 (8塊)", price: 329, tag: "聚會必吃" },
-          { name: "美式無骨雞腿排", price: 95, tag: "多汁鮮嫩" },
-          { name: "波霸甘梅地瓜條", price: 45, tag: "" },
-          { name: "起司雙重奏乳酪條", price: 55, tag: "牽絲推薦" }
-        ]
-      },
-      {
-        id: 7,
-        name: "六扇門時尚湯鍋",
-        category: "hotpot",
-        latOffset: 0.015,
-        lngOffset: 0.004,
-        rating: 4.6,
-        openNow: true,
-        address: "中棲路198號",
-        menu: [
-          { name: "經典原味豬肉鍋", price: 170, tag: "附飯/冬粉" },
-          { name: "川味麻辣牛肉鍋", price: 200, tag: "麻香四溢" },
-          { name: "香濃起司牛奶鍋", price: 210, tag: "濃郁白湯" },
-          { name: "外帶綜合滷味拼盤", price: 75, tag: "加料特惠" }
-        ]
-      },
-      {
-        id: 8,
-        name: "三媽臭臭鍋",
-        category: "hotpot",
-        latOffset: -0.011,
-        lngOffset: 0.012,
-        rating: 4.2,
-        openNow: false,
-        address: "文化路52號",
-        menu: [
-          { name: "大腸臭臭鍋", price: 160, tag: "台式老牌" },
-          { name: "海鮮豆腐鍋", price: 160, tag: "鮮甜清爽" },
-          { name: "泡菜豬肉鍋", price: 170, tag: "微酸開胃" }
-        ]
-      },
-      {
-        id: 9,
-        name: "路易莎咖啡 LOUISA",
-        category: "light",
-        latOffset: 0.004,
-        lngOffset: -0.006,
-        rating: 4.5,
-        openNow: true,
-        address: "自強路66號",
-        menu: [
-          { name: "莊園級美式黑咖啡", price: 65, tag: "經典提神" },
-          { name: "全麥牛肉起司熱壓吐司", price: 80, tag: "熱門首選" },
-          { name: "紅翠青檸冷泡茶", price: 55, tag: "生津止渴" },
-          { name: "法式經典法棍總匯堡", price: 95, tag: "飽足輕食" }
-        ]
-      },
-      {
-        id: 10,
-        name: "弘爺漢堡 早午餐",
-        category: "light",
-        latOffset: -0.007,
-        lngOffset: -0.010,
-        rating: 4.3,
-        openNow: true,
-        address: "日新街15號",
-        menu: [
-          { name: "招牌卡啦雞腿堡套餐", price: 110, tag: "大份量" },
-          { name: "起司蛋餅 + 大冰奶", price: 60, tag: "台灣經典" },
-          { name: "鐵板黑胡椒豬排麵", price: 75, tag: "傳統早餐" }
-        ]
-      },
-      {
-        id: 11,
-        name: "金之園草袋飯",
-        category: "rice",
-        latOffset: 0.019,
-        lngOffset: 0.015,
-        rating: 4.8,
-        openNow: true,
-        address: "自由路三段88號",
-        menu: [
-          { name: "酥炸排骨草袋飯", price: 150, tag: "必比登名店" },
-          { name: "酥脆沙茶牛肉飯", price: 160, tag: "鑊氣足" },
-          { name: "白菜滷", price: 50, tag: "古早味" }
-        ]
-      },
-      {
-        id: 12,
-        name: "溫州大餛飩麵館",
-        category: "noodle",
-        latOffset: -0.018,
-        lngOffset: 0.008,
-        rating: 4.4,
-        openNow: true,
-        address: "中正路32號",
-        menu: [
-          { name: "鮮肉大餛飩湯麵", price: 85, tag: "粒粒飽滿" },
-          { name: "紅油抄手", price: 75, tag: "酸辣過癮" },
-          { name: "炸醬乾拌麵", price: 65, tag: "" }
-        ]
+    // 交通模式切換 (機車 vs 開車)
+    function setMode(mode) {
+      currentMode = mode;
+      const btnMoto = document.getElementById('btnMoto');
+      const btnCar = document.getElementById('btnCar');
+      if (mode === 'moto') {
+        btnMoto.className = 'px-2.5 py-1 font-bold rounded-lg bg-orange-600 text-white transition';
+        btnCar.className = 'px-2.5 py-1 font-bold rounded-lg text-slate-400 hover:text-slate-200 transition';
+      } else {
+        btnCar.className = 'px-2.5 py-1 font-bold rounded-lg bg-orange-600 text-white transition';
+        btnMoto.className = 'px-2.5 py-1 font-bold rounded-lg text-slate-400 hover:text-slate-200 transition';
       }
-    ];
+      onRadiusSliderChange(document.getElementById('timeSlider').value);
+    }
 
-    // State Variables
-    let currentCategory = 'all';
-    let currentRadius = 3.0; // km
-    let filterOpenOnly = true;
-    let filteredStores = [];
-    let currentWheelAngle = 0;
-    let isSpinning = false;
-    let targetStore = null;
+    // 滑桿車程時間換算半徑公里數
+    function onRadiusSliderChange(minutes) {
+      const min = parseInt(minutes);
+      document.getElementById('timeVal').innerText = `${min} 分鐘`;
 
-    // Haversine formula to compute distance in km
-    function calculateDistance(lat1, lon1, lat2, lon2) {
-      const R = 6371; // Earth radius in km
+      // 機車以市區約 30 km/h (0.5 km/分)，開車以 45 km/h (0.75 km/分) 計算
+      const kmPerMin = currentMode === 'moto' ? 0.5 : 0.75;
+      currentRadiusKm = parseFloat((min * kmPerMin).toFixed(1));
+      
+      document.getElementById('distVal').innerText = `約 ${currentRadiusKm} km`;
+      if (circleLayer) circleLayer.setRadius(currentRadiusKm * 1000);
+
+      refreshData();
+    }
+
+    // 分類按鈕切換
+    function changeCategory(catKey, btn) {
+      currentCat = catKey;
+      document.querySelectorAll('.cat-pill').forEach(b => {
+        b.className = 'cat-pill py-2 px-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-xl border border-slate-700 text-center transition';
+      });
+      btn.className = 'cat-pill active py-2 px-1 bg-orange-600 text-[11px] font-bold rounded-xl border border-orange-500 text-center transition';
+      refreshData();
+    }
+
+    // 計算兩點球面距離 (公里)
+    function getDistanceKm(lat1, lon1, lat2, lon2) {
+      const R = 6371;
       const dLat = (lat2 - lat1) * Math.PI / 180;
       const dLon = (lon2 - lon1) * Math.PI / 180;
-      const a = 
-        Math.sin(dLat/2) * Math.sin(dLat/2) +
-        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-        Math.sin(dLon/2) * Math.sin(dLon/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      return R * c;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
-    function updateFilteredStores() {
-      filteredStores = RESTAURANT_DB.map(store => {
-        const storeLat = userLocation.lat + store.latOffset;
-        const storeLng = userLocation.lng + store.lngOffset;
-        const distance = calculateDistance(userLocation.lat, userLocation.lng, storeLat, storeLng);
-        return {
-          ...store,
-          distance: Math.round(distance * 10) / 10,
-          exactLat: storeLat,
-          exactLng: storeLng
-        };
-      }).filter(store => {
-        const matchesCategory = (currentCategory === 'all') || (store.category === currentCategory);
-        const matchesDistance = store.distance <= currentRadius;
-        const matchesOpen = !filterOpenOnly || store.openNow;
-        return matchesCategory && matchesDistance && matchesOpen;
+    // 核心資料更新與過濾
+    function refreshData() {
+      // 1. 根據與當前中心點的實際距離篩選
+      currentStores = LIFE_DATABASE.filter(s => {
+        const d = getDistanceKm(centerCoords.lat, centerCoords.lng, s.lat, s.lng);
+        s.currentDist = d; // 動態記錄距離
+        return s.cat === currentCat && d <= currentRadiusKm;
       });
 
-      // Update indicators
-      document.getElementById('item-count-text').innerText = `符合 ${filteredStores.length} 家`;
-      document.getElementById('candidate-count').innerText = filteredStores.length;
-      document.getElementById('filter-summary-badge').innerText = `${currentRadius}km / ${filterOpenOnly ? '營業中' : '全部狀態'}`;
+      // 依距離由近到遠排序
+      currentStores.sort((a, b) => a.currentDist - b.currentDist);
 
-      renderStoreList();
-      drawRouletteWheel();
-    }
-
-    // Render category chips
-    function renderCategoryChips() {
-      const container = document.getElementById('category-container');
-      container.innerHTML = '';
-      CATEGORIES.forEach(cat => {
-        const isSelected = cat.id === currentCategory;
-        const chip = document.createElement('button');
-        chip.className = `flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all ${
-          isSelected 
-            ? 'bg-orange-500 text-white shadow-md shadow-orange-500/30' 
-            : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 border border-slate-700'
-        }`;
-        chip.innerHTML = `<i class="ph-bold ${cat.icon}"></i><span>${cat.name}</span>`;
-        chip.onclick = () => {
-          currentCategory = cat.id;
-          renderCategoryChips();
-          updateFilteredStores();
-        };
-        container.appendChild(chip);
-      });
-    }
-
-    // Render candidate store items list
-    function renderStoreList() {
-      const container = document.getElementById('store-list');
-      container.innerHTML = '';
-
-      if (filteredStores.length === 0) {
-        container.innerHTML = `
-          <div class="py-6 text-center text-xs text-slate-500 glass-card rounded-2xl">
-            <i class="ph-bold ph-magnifying-glass text-2xl mb-1 text-slate-600 block"></i>
-            目前條件下沒有找到外帶餐廳，請放寬距離或分類！
-          </div>
-        `;
-        return;
+      // 防呆：若範圍拉太小沒有店家，至少列出該分類離此處最近的 2 間
+      if (currentStores.length === 0) {
+        const allInCat = LIFE_DATABASE.filter(s => s.cat === currentCat);
+        allInCat.forEach(s => s.currentDist = getDistanceKm(centerCoords.lat, centerCoords.lng, s.lat, s.lng));
+        allInCat.sort((a, b) => a.currentDist - b.currentDist);
+        currentStores = allInCat.slice(0, 2);
       }
 
-      filteredStores.forEach((store, idx) => {
-        const row = document.createElement('div');
-        row.className = "p-2.5 rounded-xl bg-slate-900/80 border border-slate-800/80 flex items-center justify-between text-xs";
-        row.innerHTML = `
-          <div class="flex items-center space-x-2.5 min-w-0">
-            <span class="w-5 h-5 rounded-full bg-slate-800 text-orange-400 font-bold flex items-center justify-center text-[10px] shrink-0 border border-slate-700">
-              ${idx + 1}
-            </span>
-            <div class="truncate">
-              <span class="font-bold text-slate-200 block truncate">${store.name}</span>
-              <span class="text-[10px] text-slate-400 flex items-center space-x-1.5">
-                <span class="text-amber-400 flex items-center"><i class="ph-fill ph-star text-[10px] mr-0.5"></i>${store.rating}</span>
-                <span>•</span>
-                <span>${store.distance} km</span>
+      document.getElementById('poolBadge').innerText = `符合 ${currentStores.length} 處`;
+      document.getElementById('filteredSummary').innerText = `${currentStores.length} 間`;
+
+      renderList();
+      renderMapMarkers();
+    }
+
+    // 渲染左側卡片列表（包含價目／費率預覽）
+    function renderList() {
+      const listContainer = document.getElementById('storeList');
+      listContainer.innerHTML = '';
+
+      currentStores.forEach((s, idx) => {
+        const estMin = currentMode === 'moto' ? Math.round(s.currentDist * 2) + 1 : Math.round(s.currentDist * 1.4) + 2;
+        const card = document.createElement('div');
+        card.className = 'p-3 bg-slate-950/80 hover:bg-slate-900 border border-slate-800/80 rounded-2xl cursor-pointer transition flex flex-col gap-1.5 shadow';
+        card.onclick = () => focusStore(s);
+
+        // 預覽前兩項菜單或費率
+        const samplePreview = s.items.slice(0, 2).map(m => `${m.n} <span class="text-orange-400 font-mono font-bold">${m.p}</span>`).join(' ｜ ');
+
+        card.innerHTML = `
+          <div class="flex justify-between items-start">
+            <div>
+              <div class="font-black text-slate-100 text-xs flex items-center gap-1.5">
+                <span>${s.name}</span>
+                <span class="text-[10px] text-amber-400 font-mono font-bold">⭐ ${s.rating}</span>
+              </div>
+              <div class="text-[10px] text-slate-500 truncate mt-0.5">${s.addr}</div>
+            </div>
+            <div class="text-right shrink-0">
+              <span class="text-[10px] bg-slate-900 text-orange-400 px-2 py-0.5 rounded font-mono font-bold border border-slate-800">
+                ${s.avg}
               </span>
             </div>
           </div>
-          <span class="px-2 py-0.5 rounded text-[10px] font-semibold shrink-0 ${store.openNow ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-rose-950 text-rose-400'}">
-            ${store.openNow ? '外帶中' : '休息中'}
-          </span>
+          <div class="text-[11px] text-slate-300 bg-slate-900/60 px-2.5 py-1.5 rounded-lg border border-slate-800/50 flex justify-between items-center">
+            <span class="truncate text-slate-400 text-[10px]">${samplePreview}</span>
+            <span class="text-[10px] text-orange-400 shrink-0 font-medium ml-2">${currentMode === 'moto' ? '🛵' : '🚗'} ${estMin} 分鐘</span>
+          </div>
         `;
-        container.appendChild(row);
+        listContainer.appendChild(card);
       });
     }
 
-    const canvas = document.getElementById('roulette-canvas');
-    const ctx = canvas.getContext('2d');
-    const WHEEL_COLORS = [
-      '#f97316', '#0ea5e9', '#10b981', '#8b5cf6', 
-      '#ec4899', '#f59e0b', '#06b6d4', '#6366f1'
-    ];
+    // 繪製地圖上的真實圖釘
+    function renderMapMarkers() {
+      storeMarkersGroup.clearLayers();
 
-    function drawRouletteWheel() {
-      const width = canvas.width;
-      const height = canvas.height;
-      const center = width / 2;
-      const radius = center - 20;
+      currentStores.forEach(s => {
+        // 依分類區分圖釘圖示
+        let iconSymbol = '🍔';
+        if (s.cat === 'PARKING') iconSymbol = '🅿️';
+        if (s.cat === 'MART') iconSymbol = '🛒';
+        if (s.cat === 'DRINK') iconSymbol = '🧋';
+        if (s.cat === 'FOOD_STEAK') iconSymbol = '🥩';
+        if (s.cat === 'FOOD_VEGE') iconSymbol = '🥦';
+        if (s.cat === 'GATHER') iconSymbol = '🍻';
 
-      ctx.clearRect(0, 0, width, height);
-
-      // Empty wheel placeholder if no stores
-      if (filteredStores.length === 0) {
-        ctx.beginPath();
-        ctx.arc(center, center, radius, 0, 2 * Math.PI);
-        ctx.fillStyle = '#1e293b';
-        ctx.fill();
-        ctx.lineWidth = 6;
-        ctx.strokeStyle = '#334155';
-        ctx.stroke();
-
-        ctx.fillStyle = '#64748b';
-        ctx.font = 'bold 28px "Noto Sans TC"';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('無店家可供抽取', center, center);
-        return;
-      }
-
-      const numSlices = filteredStores.length;
-      const arcSize = (2 * Math.PI) / numSlices;
-
-      // Draw sectors
-      for (let i = 0; i < numSlices; i++) {
-        const angle = currentWheelAngle + i * arcSize;
-        ctx.beginPath();
-        ctx.moveTo(center, center);
-        ctx.arc(center, center, radius, angle, angle + arcSize);
-        ctx.closePath();
-
-        // Alternating vibrant palettes
-        ctx.fillStyle = WHEEL_COLORS[i % WHEEL_COLORS.length];
-        ctx.fill();
-        ctx.lineWidth = 4;
-        ctx.strokeStyle = '#0f172a';
-        ctx.stroke();
-
-        // Sector text label
-        ctx.save();
-        ctx.translate(center, center);
-        ctx.rotate(angle + arcSize / 2);
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#ffffff';
-        ctx.shadowColor = 'rgba(0,0,0,0.6)';
-        ctx.shadowBlur = 4;
-        ctx.font = 'bold 26px "Noto Sans TC"';
-
-        const storeName = filteredStores[i].name;
-        // Clip long names for clean aesthetic
-        const displayName = storeName.length > 7 ? storeName.substring(0, 6) + '..' : storeName;
-        ctx.fillText(displayName, radius - 35, 10);
-        ctx.restore();
-      }
-
-      // Outer rim decoration
-      ctx.beginPath();
-      ctx.arc(center, center, radius, 0, 2 * Math.PI);
-      ctx.lineWidth = 10;
-      ctx.strokeStyle = '#334155';
-      ctx.stroke();
-    }
-
-    let spinVelocity = 0;
-    let friction = 0.985;
-    let lastTickAngle = 0;
-
-    function spinRoulette() {
-      if (isSpinning) return;
-      if (filteredStores.length === 0) {
-        alertFallback("目前條件下沒有店家可抽，請調整搜尋半徑或分類！");
-        return;
-      }
-      initAudio();
-
-      isSpinning = true;
-      document.getElementById('btn-spin').classList.add('opacity-50', 'pointer-events-none');
-      document.getElementById('btn-quick-spin').classList.add('opacity-50', 'pointer-events-none');
-
-      // Random initial impulse velocity
-      spinVelocity = Math.random() * 0.25 + 0.38; // initial speed radians/frame
-      lastTickAngle = currentWheelAngle;
-
-      animateSpin();
-    }
-
-    function animateSpin() {
-      if (!isSpinning) return;
-
-      currentWheelAngle += spinVelocity;
-      spinVelocity *= friction; // Gradual deceleration
-
-      // Sound ticking on sector pass
-      const sliceSize = (2 * Math.PI) / filteredStores.length;
-      if (Math.abs(currentWheelAngle - lastTickAngle) >= sliceSize) {
-        playTickSound();
-        lastTickAngle = currentWheelAngle;
-      }
-
-      drawRouletteWheel();
-
-      if (spinVelocity > 0.002) {
-        requestAnimationFrame(animateSpin);
-      } else {
-        // Stop spinning & calculate winner
-        isSpinning = false;
-        document.getElementById('btn-spin').classList.remove('opacity-50', 'pointer-events-none');
-        document.getElementById('btn-quick-spin').classList.remove('opacity-50', 'pointer-events-none');
-        determineWinner();
-      }
-    }
-
-    function determineWinner() {
-      const sliceSize = (2 * Math.PI) / filteredStores.length;
-      // Top pointer is located at -Math.PI / 2 (or 3*PI/2)
-      // Normalize angle between [0, 2PI)
-      const normalizedAngle = ((currentWheelAngle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-      const pointerAngle = (1.5 * Math.PI - normalizedAngle + 2 * Math.PI) % (2 * Math.PI);
-      const winningIndex = Math.floor(pointerAngle / sliceSize) % filteredStores.length;
-
-      targetStore = filteredStores[winningIndex];
-
-      // Audio & Confetti Celebration
-      playWinSound();
-      if (typeof confetti === 'function') {
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 }
-        });
-      }
-
-      // Display Modal with delay
-      setTimeout(() => {
-        openResultModal(targetStore);
-      }, 350);
-    }
-
-    function openResultModal(store) {
-      if (!store) return;
-      document.getElementById('res-name').innerText = store.name;
-      document.getElementById('res-rating').innerText = store.rating;
-      document.getElementById('res-distance').innerText = `距離 ${store.distance} km`;
-      
-      const catObj = CATEGORIES.find(c => c.id === store.category);
-      document.getElementById('res-type').innerText = catObj ? catObj.name : '精選外帶';
-      
-      const fullAddress = `${store.address}`;
-      document.getElementById('res-address').innerText = fullAddress;
-      
-      // Google Maps Direct Navigation Link
-      const mapsQuery = encodeURIComponent(`${store.name} ${store.address}`);
-      document.getElementById('res-maps-link').href = `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`;
-
-      // Render Menu Items & Prices
-      const menuContainer = document.getElementById('menu-items-container');
-      menuContainer.innerHTML = '';
-      if (store.menu && store.menu.length > 0) {
-        store.menu.forEach(item => {
-          const itemDiv = document.createElement('div');
-          itemDiv.className = "flex items-center justify-between py-1.5 border-b border-slate-800/60 last:border-b-0";
-          itemDiv.innerHTML = `
-            <div class="flex items-center space-x-2">
-              <span class="text-xs font-semibold text-slate-200">${item.name}</span>
-              ${item.tag ? `<span class="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 font-bold">${item.tag}</span>` : ''}
+        const customMarkerIcon = L.divIcon({
+          className: 'custom-store-pin',
+          html: `
+            <div class="flex items-center justify-center w-7 h-7 bg-slate-900 text-white rounded-full border-2 border-orange-500 shadow-md font-bold text-xs hover:scale-125 transition">
+              ${iconSymbol}
             </div>
-            <span class="text-xs font-bold text-amber-400 font-mono">$${item.price}</span>
-          `;
-          menuContainer.appendChild(itemDiv);
+          `,
+          iconSize: [28, 28],
+          iconAnchor: [14, 14]
         });
+
+        const marker = L.marker([s.lat, s.lng], { icon: customMarkerIcon });
+        
+        // 點擊圖釘彈出抽屜
+        marker.on('click', () => {
+          focusStore(s);
+        });
+
+        storeMarkersGroup.addLayer(marker);
+      });
+    }
+
+    // 聚焦特定設施並開啟底部抽屜
+    function focusStore(store) {
+      map.flyTo([store.lat, store.lng], 16, { duration: 0.8 });
+
+      const estMin = currentMode === 'moto' ? Math.round(store.currentDist * 2) + 1 : Math.round(store.currentDist * 1.4) + 2;
+
+      // 填入詳細資訊
+      document.getElementById('drawerTitle').innerText = store.name;
+      document.getElementById('drawerAddr').innerText = store.addr;
+      document.getElementById('drawerRate').innerText = store.avg;
+      document.getElementById('drawerDistance').innerText = `${currentMode === 'moto' ? '🛵 機車' : '🚗 開車'} 約 ${estMin} 分鐘 (${store.currentDist.toFixed(1)} km)`;
+      
+      const badge = document.getElementById('drawerCatBadge');
+      if (store.cat === 'PARKING') {
+        badge.innerText = '🅿️ 收費停車場';
+        document.getElementById('drawerDetailLabel').innerText = '📋 詳細計費規則與上限：';
+      } else if (store.cat === 'MART') {
+        badge.innerText = '🛒 大賣場/超市';
+        document.getElementById('drawerDetailLabel').innerText = '🔥 賣場特色與配套：';
       } else {
-        menuContainer.innerHTML = '<div class="text-xs text-slate-500 text-center py-2">現場提供更多豐富外帶餐點</div>';
+        badge.innerText = '🍽️ 美食餐飲';
+        document.getElementById('drawerDetailLabel').innerText = '🔥 推薦必點 & 參考價位：';
       }
 
-      // Show Modal
-      const modal = document.getElementById('result-modal');
-      const card = document.getElementById('modal-card');
-      modal.classList.remove('hidden');
-      setTimeout(() => {
-        modal.classList.remove('opacity-0');
-        card.classList.remove('scale-95');
-        card.classList.add('scale-100');
-      }, 10);
+      // 產生完整價目項目
+      const itemsBox = document.getElementById('drawerItemsBox');
+      itemsBox.innerHTML = store.items.map(item => `
+        <div class="flex justify-between items-center py-0.5 border-b border-slate-900 text-[11px]">
+          <span class="text-slate-300 truncate">${item.n}</span>
+          <span class="text-orange-400 font-mono font-bold ml-2">${item.p}</span>
+        </div>
+      `).join('');
+
+      // Google 導航 deep link
+      const travelMode = currentMode === 'moto' ? 'motorcycle' : 'driving';
+      const navUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(store.name + ' ' + store.addr)}&travelmode=${travelMode}`;
+      document.getElementById('drawerNavBtn').href = navUrl;
+
+      document.getElementById('detailDrawer').classList.remove('hidden');
     }
 
-    function closeResultModal() {
-      const modal = document.getElementById('result-modal');
-      const card = document.getElementById('modal-card');
-      modal.classList.add('opacity-0');
-      card.classList.remove('scale-100');
-      card.classList.add('scale-95');
-      setTimeout(() => {
-        modal.classList.add('hidden');
-      }, 300);
+    function closeDrawer() {
+      document.getElementById('detailDrawer').classList.add('hidden');
     }
-
-    // In-app alert fallback without using native alert()
-    function alertFallback(msg) {
-      const banner = document.createElement('div');
-      banner.className = 'fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-orange-600 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-xl transition-all duration-300 transform opacity-0 -translate-y-2';
-      banner.innerText = msg;
-      document.body.appendChild(banner);
-      setTimeout(() => {
-        banner.classList.remove('opacity-0', '-translate-y-2');
-      }, 10);
-      setTimeout(() => {
-        banner.classList.add('opacity-0', '-translate-y-2');
-        setTimeout(() => banner.remove(), 300);
-      }, 2500);
-    }
-
-    function requestUserLocation() {
-      const locText = document.getElementById('location-address');
-      const locBtnText = document.getElementById('loc-btn-text');
-      const icon = document.getElementById('locate-icon');
-
-      locText.innerText = "正在取得 GPS 定位中...";
-      icon.classList.add('animate-spin');
-
-      if (!navigator.geolocation) {
-        useDefaultLocation("瀏覽器不支援 GPS，已啟用預設位置");
-        return;
-      }
-
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          userLocation.lat = pos.coords.latitude;
-          userLocation.lng = pos.coords.longitude;
-          userLocation.address = `經緯度: ${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}`;
-          
-          locText.innerText = `目前所在位置 (GPS 已鎖定)`;
-          locBtnText.innerText = "已定位";
-          icon.classList.remove('animate-spin');
-          updateFilteredStores();
-        },
-        (err) => {
-          console.warn("Geolocation denied or error:", err.message);
-          useDefaultLocation("已切換至預設座標 (沙鹿生活圈)");
-        },
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
-      );
-    }
-
-    function useDefaultLocation(msg) {
-      userLocation = { ...DEFAULT_COORDS };
-      document.getElementById('location-address').innerText = DEFAULT_COORDS.address;
-      document.getElementById('loc-btn-text').innerText = "預設位置";
-      document.getElementById('locate-icon').classList.remove('animate-spin');
-      if (msg) alertFallback(msg);
-      updateFilteredStores();
-    }
-
-    window.addEventListener('DOMContentLoaded', () => {
-      // Initialize Categories & Stores
-      renderCategoryChips();
-      requestUserLocation();
-
-      // Radius Slider
-      const radiusSlider = document.getElementById('radius-slider');
-      radiusSlider.addEventListener('input', (e) => {
-        currentRadius = parseFloat(e.target.value);
-        document.getElementById('radius-val').innerText = `${currentRadius.toFixed(1)} km`;
-        updateFilteredStores();
-      });
-
-      // Open status toggle
-      const openBtn = document.getElementById('toggle-open-only');
-      openBtn.addEventListener('click', () => {
-        filterOpenOnly = !filterOpenOnly;
-        if (filterOpenOnly) {
-          openBtn.classList.remove('bg-slate-800', 'text-slate-400', 'border-slate-700');
-          openBtn.classList.add('bg-orange-500/10', 'text-orange-400', 'border-orange-500/30');
-        } else {
-          openBtn.classList.add('bg-slate-800', 'text-slate-400', 'border-slate-700');
-          openBtn.classList.remove('bg-orange-500/10', 'text-orange-400', 'border-orange-500/30');
-        }
-        updateFilteredStores();
-      });
-
-      // Spin buttons
-      document.getElementById('btn-spin').addEventListener('click', spinRoulette);
-      document.getElementById('btn-quick-spin').addEventListener('click', spinRoulette);
-
-      // Re-locate button
-      document.getElementById('btn-re-locate').addEventListener('click', requestUserLocation);
-
-      // Modal Events
-      document.getElementById('modal-close-btn').addEventListener('click', closeResultModal);
-      document.getElementById('modal-confirm').addEventListener('click', () => {
-        closeResultModal();
-        alertFallback(`太棒了！準備享用 ${targetStore ? targetStore.name : '美食'} 囉！`);
-      });
-      document.getElementById('modal-spin-again').addEventListener('click', () => {
-        closeResultModal();
-        setTimeout(spinRoulette, 400);
-      });
-
-      // Close modal on clicking outside background
-      document.getElementById('result-modal').addEventListener('click', (e) => {
-        if (e.target.id === 'result-modal') {
-          closeResultModal();
-        }
-      });
-    });
   </script>
 </body>
 </html>
